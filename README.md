@@ -11,4 +11,4 @@ This project was started out of frustration with [Radiance](https://github.com/z
 This led me to create a new project targeted at strip-based lighting setups.  The two big differences in functionality are that it has a minimalist protocol that simplifies the client-controller code and that it's effects are targeted to look best on LED strips rather than screen-style 2-D grids.
 
 ## Why Is This Written In Julia?
-Julia is a high-performance high-level language.  It is mostly aimed at the likes of MATLAB, but it also is a distinctly decent general purpose programming language.  The killer feature here is that it has libraries for PortAudio and FFTW
+Julia is a high-performance high-level language.  It is mostly aimed at the likes of MATLAB, but it also is a distinctly decent general purpose programming language.  The killer feature here is that it has libraries for PortAudio and FFT's, and the language itself is natively very fast.
