@@ -1,16 +1,26 @@
-using IniFile
+using JSON
 import Base.getindex
 # Make some types so that I don't go insane
-type LEDStrip
+mutable struct LEDStrip
     channelNum::Int
-    controller::Int
+    controller::LEDController
     numLED::Int
     startAddr::Int
     endAddr::Int
 end
-getindex(strip::LEDStrip,i::Int) = getindex([strip.startAddr strip.endAddr], i)
-type LEDArray
+mutable struct LEDController
+    addrs::Array{Int,1}
+    strips::Array{LEDStrip}
+end
+getindex(strip::LEDStrip, i::Any) = getindex(strip.controller.addrs, i + strip.startAddr)
+mutable struct LEDArray
     numChannels::Int
     controllers::Array{Int}
     strips::Array{LEDStrip}
+end
+
+function parse_config(filename)
+    open(filename, "r") do f
+        json_data = JSON.parse(f)
+    end
 end

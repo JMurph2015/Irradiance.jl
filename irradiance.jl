@@ -3,28 +3,44 @@ using PortAudio, SampledSignals, DSP
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
 
-mode = "0"
 function main()
+    signal_channel = Channel{String}(1)
     audio = PortAudioStream()
     udpsock = UDPSocket()
     numLED = 600
     leddata = [zeros(3) for i in 1:numLED]
+    valid_modes = r"\d{1,2}"
     @async begin
         while true
             temp = readline(STDIN)
-            if temp[1] in "0123456789"
-                mode = temp[1]
+            if ismatch(temp[1], valid_modes)
+                if length(signal_channel < 1)
+                    take!(signal_channel)
+                end
+                put!(signal_channel, temp[1])
+            elseif ismatch(temp[1], "\x02")
+                if length(signal_channel < 1)
+                    take!(signal_channel)
+                end
+                put!(signal_channel, "shutdown")
             end
         end
     end
-    while true
-        parseAndUpdate(read(audio,(1/30)s),leddata,udpsock)
-    end
-
+    main_loop(audio, leddata, udpsock, signal_channel)
 end
-function parseAndUpdate(audioSamp, leddata, socket)
+function main_loop(audio, leddata, udpsock, signal_channel)
+    shutdown = false
+    while !shutdown
+        mode = fetch(signal_channel)
+        if mode == "shutdown"
+            shutdown = true
+        end
+        audioSamp = read(audio, (1/30)s)
+        parseAndUpdate(audioSamp, leddata, udpsock, mode)
+    end
+end
+function parseAndUpdate(audioSamp, leddata, socket, mode)
     spec = fft(audioSamp[:,1])
-
     if mode == "0"
         leddata = getBarsFrame(leddata, audioSamp[:,1], spec)
     end
