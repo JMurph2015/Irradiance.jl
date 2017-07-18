@@ -1,5 +1,7 @@
 using PortAudio, SampledSignals, DSP
-
+const update_methods = Dict(
+    "0"=>getBarsFrame
+)
 function binFFT(rawspec, nbins)
     nbin = nbins+1
     f(x) = 2^x

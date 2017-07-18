@@ -1,14 +1,14 @@
 using PortAudio, SampledSignals, DSP
 
+include("./LEDTypes.jl")
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
 
 function main()
+    led_data = parse_config("./lights.json")
     signal_channel = Channel{String}(1)
     audio = PortAudioStream()
     udpsock = UDPSocket()
-    numLED = 600
-    leddata = [zeros(3) for i in 1:numLED]
     valid_modes = r"\d{1,2}"
     @async begin
         while true
@@ -26,9 +26,10 @@ function main()
             end
         end
     end
-    main_loop(audio, leddata, udpsock, signal_channel)
+    main_loop(audio, led_data, udpsock, signal_channel)
 end
-function main_loop(audio, leddata, udpsock, signal_channel)
+
+function main_loop(audio, led_data, udpsock, signal_channel)
     shutdown = false
     while !shutdown
         mode = fetch(signal_channel)
@@ -36,30 +37,40 @@ function main_loop(audio, leddata, udpsock, signal_channel)
             shutdown = true
         end
         audioSamp = read(audio, (1/30)s)
-        parseAndUpdate(audioSamp, leddata, udpsock, mode)
+        parseAndUpdate(audioSamp, led_data, udpsock, mode)
     end
 end
-function parseAndUpdate(audioSamp, leddata, socket, mode)
+
+function parseAndUpdate(audioSamp, led_data, socket, mode)
     spec = fft(audioSamp[:,1])
-    if mode == "0"
-        leddata = getBarsFrame(leddata, audioSamp[:,1], spec)
+    # use an implicit reference to the function if possible,
+    # else fall back on the bars animation.
+    if mode in update_methods
+        led_data = update_methods[mode](led_data, audioSamp[:,1], spec)
+    else
+        led_data = getBarsFrame(led_data, audioSamp[:,1], spec)
     end
-    push(leddata, socket)
+    push(led_data, socket)
 end
+
+function push(led_data::LEDArray, socket::UDPSocket)
+    push.(led_data.controllers, socket)
+end
+
+function push(controller::LEDController, socket::UDPSocket)
+    raw_data = zeros(UInt8, length(controller)*3)
+    raw_data .= convert_to_array.(controller.addrs)
+    send(socket, controller.location..., raw_data)
+end
+
+function convert_to_array(color::ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}})
+    return [color.r, color.g, color.b]
+end
+
 function toHexString(num)
     num <= 255 || error("Input Error")
     magic = "0123456789ABCDEF"
     num1 = floor(Int, num / 16)
     num2 = convert(Int, num % 16)
     return "$(magic[num1+1])$(magic[num2+1])"
-end
-function push(rawdata, socket)
-    data = zeros(UInt8, size(rawdata)[1]*3)
-    for i in eachindex(rawdata)
-        data[(3*i-2)] = convert(UInt8, rawdata[i][1])
-        data[(3*i-2)+1] = convert(UInt8, rawdata[i][2])
-        data[(3*i-2)+2] = convert(UInt8, rawdata[i][3])
-    end
-    #println(data)
-    send(socket, ip"127.0.0.1", 8080, data)
 end
