@@ -2,33 +2,40 @@
     "general":{
         "numChannels":4
     },
+    "controllers":{
+        "1":{
+            "ip":"127.0.0.1",
+            "port":8080,
+            "size":600
+        }
+    },
     "strips":[
         {
             "name":"frontwall",
             "start":1,
             "end":150,
-            "controller":1,
+            "controller":"1",
             "channel":1
         },
         {
             "name":"rightwall",
             "start":151,
             "end":300,
-            "controller":1,
+            "controller":"1",
             "channel":2
         },
         {
             "name":"backwall",
             "start":301,
             "end":450,
-            "controller":1,
+            "controller":"1",
             "channel":3
         },
         {
             "name":"leftwall",
             "start":451,
             "end":600,
-            "controller":1,
+            "controller":"1",
             "channel":4
         }
     ]
