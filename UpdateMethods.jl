@@ -1,7 +1,4 @@
 using PortAudio, SampledSignals, DSP, Colors
-const update_methods = Dict(
-    "0"=>getBarsFrame
-)
 function binFFT(rawspec, nbins)
     nbin = nbins+1
     f(x) = 2^x
@@ -10,14 +7,14 @@ function binFFT(rawspec, nbins)
     bands = f.(range)
     idxs = zeros(Int64, length(bands))
     for i in eachindex(idxs)
-        idxs[i] = indmin(abs(dom.-bands[i]))
+        idxs[i] = indmin(abs.(dom.-bands[i]))
     end
     spec = zeros(nbin)
     for i in eachindex(spec)
         if length(rawspec[i:idxs[i]]) > 1
-            spec[i] = sum(abs(rawspec[i:idxs[i]]))
+            spec[i] = sum(abs.(rawspec[i:idxs[i]]))
         else
-            spec[i] = abs(rawspec[i:idxs[i]])[1]
+            spec[i] = abs.(rawspec[i:idxs[i]])[1]
         end
     end
     maxspec = maximum(spec)
@@ -34,21 +31,39 @@ function getBarsFrame(leddata, audioSamp, rawspec)
         end
     end
     maxAmp = maximum(spec)
-    crossover = floor(Int, length(spec)/2)
+    crossover = floor(Int, length(spec)/1.5)
     bottomEnd = mean((spec[1:crossover]))
-    topEnd = mean(spec[crossover+1:end])
+    topEnd = mean(spec[crossover+1:end])/2
     for i in eachindex(leddata.channels)
         chan = leddata.channels[i]
+        ref_len = length(leddata.channels[i])
+        #print(i)
         if i % 4 == 1
-            leddata[1:bottomEnd*length(chan)] = colorant"blue"
+            lows = round(Int,bottomEnd*ref_len)
+            chan[1:lows] = colorant"blue"
+            chan[lows+1:end] = colorant"black"
+            #println(lows)
         elseif i % 4 == 2
-            leddata[1:topEnd*length(chan)] = colorant"red"
+            highs = round(Int,topEnd*ref_len)
+            chan[1:highs] = colorant"red"
+            chan[highs+1:end] = colorant"black"
+            #println(highs)
         elseif i % 4 == 3
-            leddata[(1-bottomEnd)*length(chan):end] = colorant"blue"
+            lows = round(Int,bottomEnd*ref_len)
+            chan[1:end-lows-1] = colorant"black"
+            chan[end-lows:end] = colorant"blue"
+            #println(lows)
         elseif i % 4 == 0
-            leddata[(1-topEnd)*length(chan):end] = colorant"red"
+            highs = round(Int,topEnd*ref_len)
+            chan[1:end-highs-1] = colorant"black"
+            chan[end-highs:end] = colorant"red"
+            #println(highs)
         else
             error("Weird modulo arithmetic failed.  Probably should've thrown an eror before this")
+        end
     end
     return leddata
 end
+const update_methods = Dict(
+    "0"=>getBarsFrame
+)

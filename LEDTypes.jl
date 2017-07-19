@@ -1,5 +1,5 @@
 using Colors, Interpolations
-import Base.getindex, Base.length, Base.setindex!, Base.push!, Base.setindex
+import Base.getindex, Base.length, Base.setindex!, Base.push!, Base.endof
 
 abstract type AbstractChannel end
 abstract type AbstractController end
@@ -20,9 +20,9 @@ mutable struct LEDStrip{T,N}
     end
 end
 
-length(strip::LEDStrip) = length(strip.endAddr - strip.startAddr + 1)
-getindex(strip::LEDStrip, i::Any) = getindex(strip.controller.addrs, i + strip.startAddr-1)
-endof(s::LEDStrip) = length(s)
+length{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}) = strip.endAddr - strip.startAddr + 1
+getindex{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, i::Any) = getindex(strip.controller, i + strip.startAddr-1)
+endof{T<:AbstractChannel, N<:AbstractController}(s::LEDStrip{T, N}) = length(s)
 function setindex!{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Color, idx::Any)
     setindex!(strip.controller, val, idx+(strip.startAddr-1))
 end
@@ -38,7 +38,8 @@ mutable struct LEDController <: AbstractController
 end
 
 length(controller::LEDController) = length(controller.addrs)
-push!(controller::LEDController, val::LEDStrip) = push!(controller.strips, val)
+push!{T<:AbstractChannel, N<:AbstractController}(controller::LEDController, val::LEDStrip{T, N}) = push!(controller.strips, val)
+getindex(controller::LEDController, idx::Any) = getindex(controller.addrs, idx)
 endof(c::LEDController) = length(c)
 function setindex!(controller::LEDController, val::Color, idx::Any)
     setindex!(controller.addrs, val, idx)
@@ -52,7 +53,7 @@ end
 
 getindex(channel::LEDChannel, idx::Int) = getindex(channel.strips[indmax(length.(channel.strips))], idx)
 length(channel::LEDChannel) = maximum(length.(channel.strips))
-push!(channel::LEDChannel, val::LEDStrip) = push!(channel.strips, val)
+push!{T<:AbstractChannel, N<:AbstractController}(channel::LEDChannel, val::LEDStrip{T, N}) = push!(channel.strips, val)
 
 function setindex!(channel::LEDChannel, val::Color, i::Any)
 

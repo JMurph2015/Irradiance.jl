@@ -15,7 +15,7 @@
             "start":1,
             "end":150,
             "controller":"1",
-            "channel":1
+            "channel":4
         },
         {
             "name":"rightwall",
@@ -36,7 +36,7 @@
             "start":451,
             "end":600,
             "controller":"1",
-            "channel":4
+            "channel":1
         }
     ]
 }

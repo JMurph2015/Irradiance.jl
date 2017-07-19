@@ -4,40 +4,58 @@ include("./LEDTypes.jl")
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
 
+const old_data = Array{Any, 1}(0)
+
 function main()
     led_data = parse_config("./lights.json")
     signal_channel = Channel{String}(1)
-    audio = PortAudioStream()
+    push!(signal_channel, "0")
+    audio = PortAudioStream("default")
     udpsock = UDPSocket()
     valid_modes = r"\d{1,2}"
     @async begin
-        while true
+        stopped = false
+        while !stopped
             temp = readline(STDIN)
-            if ismatch(temp[1], valid_modes)
-                if length(signal_channel < 1)
+            if ismatch(valid_modes, temp)
+                if length(signal_channel.data) > 0
                     take!(signal_channel)
                 end
                 put!(signal_channel, temp[1])
-            elseif ismatch(temp[1], "\x02")
-                if length(signal_channel < 1)
+            elseif ismatch(r"shutdown|quit"six, temp)
+                if length(signal_channel.data) > 0
                     take!(signal_channel)
                 end
                 put!(signal_channel, "shutdown")
+                stopped = true
+            elseif ismatch(r"\x02"six, temp)
+                if length(signal_channel.data) > 0
+                    take!(signal_channel)
+                end
+                put!(signal_channel, "shutdown")
+                stopped = true
             end
         end
     end
     main_loop(audio, led_data, udpsock, signal_channel)
+    close(audio)
+    close(signal_channel)
 end
 
 function main_loop(audio, led_data, udpsock, signal_channel)
     shutdown = false
+    for channel in led_data.channels
+        channel[1:end] = colorant"black"
+    end
     while !shutdown
         mode = fetch(signal_channel)
         if mode == "shutdown"
             shutdown = true
         end
-        audioSamp = read(audio, (1/30)s)
-        parseAndUpdate(audioSamp, led_data, udpsock, mode)
+        audioSamp = read(audio, (1/60)s)
+        @async begin
+            parseAndUpdate(audioSamp, led_data, udpsock, mode)
+        end
     end
 end
 
@@ -45,7 +63,7 @@ function parseAndUpdate(audioSamp, led_data, socket, mode)
     spec = fft(audioSamp[:,1])
     # use an implicit reference to the function if possible,
     # else fall back on the bars animation.
-    if mode in update_methods
+    if mode in keys(update_methods)
         led_data = update_methods[mode](led_data, audioSamp[:,1], spec)
     else
         led_data = getBarsFrame(led_data, audioSamp[:,1], spec)
@@ -58,13 +76,16 @@ function push(led_data::LEDArray, socket::UDPSocket)
 end
 
 function push(controller::LEDController, socket::UDPSocket)
-    raw_data = zeros(UInt8, length(controller)*3)
-    raw_data .= convert_to_array.(controller.addrs)
-    send(socket, controller.location..., raw_data)
+    #println(length(filter(x->x==colorant"blue", controller.addrs)))
+    #println(length(filter(x->x==colorant"red", controller.addrs)))
+    raw_data = zeros(UInt8, length(controller.addrs)*3)
+    raw_data .= vcat((convert_to_array.(controller.addrs))...)::Array{UInt8}
+    #println(length(filter(x->x!=0x00, raw_data)))
+    send(socket, controller.location[1], controller.location[2], raw_data)
 end
 
 function convert_to_array(color::ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}})
-    return [color.r, color.g, color.b]
+    return [color.r.i, color.g.i, color.b.i]
 end
 
 function toHexString(num)
