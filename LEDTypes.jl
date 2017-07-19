@@ -22,15 +22,10 @@ end
 
 length(strip::LEDStrip) = length(strip.endAddr - strip.startAddr + 1)
 getindex(strip::LEDStrip, i::Any) = getindex(strip.controller.addrs, i + strip.startAddr-1)
-function setindex!{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Color, idx::Int)
-    strip.controller[idx+strip.startAddr-1] = val
+endof(s::LEDStrip) = length(s)
+function setindex!{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Color, idx::Any)
+    setindex!(strip.controller, val, idx+(strip.startAddr-1))
 end
-function setindex{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Color, idx::Int)
-    new_strip = deepcopy(strip)
-    new_strip.controller[idx+strip.startAddr-1] = val
-    return new_strip
-end
-
 
 
 mutable struct LEDController <: AbstractController
@@ -44,15 +39,10 @@ end
 
 length(controller::LEDController) = length(controller.addrs)
 push!(controller::LEDController, val::LEDStrip) = push!(controller.strips, val)
-function setindex!(controller::LEDController, val::Color, idx::Int)
-    controller.addrs[idx] = val
+endof(c::LEDController) = length(c)
+function setindex!(controller::LEDController, val::Color, idx::Any)
+    setindex!(controller.addrs, val, idx)
 end
-function setindex(controller::LEDController, val::Color, idx::Int)
-    new_controller = deepcopy(controller)
-    new_controller.addrs[idx] = val
-    return new_controller
-end
-
 
 
 mutable struct LEDChannel <: AbstractChannel
@@ -64,8 +54,7 @@ getindex(channel::LEDChannel, idx::Int) = getindex(channel.strips[indmax(length.
 length(channel::LEDChannel) = maximum(length.(channel.strips))
 push!(channel::LEDChannel, val::LEDStrip) = push!(channel.strips, val)
 
-function setindex!(channel::LEDChannel, val::Color, i::Int)
-    i >= length(channel) || error("Index Out Bounds For This Channel")
+function setindex!(channel::LEDChannel, val::Color, i::Any)
 
     homogeneous = true
     for i in 2:length(channel.strips)
@@ -75,44 +64,21 @@ function setindex!(channel::LEDChannel, val::Color, i::Int)
         end
     end
     if homogeneous
-        setindex!.(channel.strips, val, i)
+        for strip in channel.strips
+            setindex!(strip, val, i)
+        end
     else
         max_length = indmax(length.(channel.strips))
-        channel.strips[max_length][i] = val
+        setindex!(channel.strips[max_length], val, i)
         itp = interpolate(channel.strips[max_length][i], BSpline(Cubic(Line())), OnCell())
         for j in eachindex(channel.strips)
             if j != max_length
-                channel.strips[j] = itp[linspace(1,length(itp),length(channel.strips[j]))]
+                setindex!(channel.strips, itp[linspace(1,length(itp),length(channel.strips[j]))], : )
             end
         end
     end
 end
-
-function setindex(channel::LEDChannel, val::Color, i::Int)
-    i >= length(channel) || error("Index Out Bounds For This Channel")
-
-    new_channel = deepcopy(channel)
-    homogeneous = True
-    for i in 2:length(new_channel.strips)
-        if length(new_channel.strips[i]) != length(new_channel.strips[i-1])
-            homogeneous = false
-            break
-        end
-    end
-    if homogeneous
-        setindex!.(new_channel.strips, i, val)
-    else
-        max_length = indmax(length.(new_channel.strips))
-        new_channel.strips[max_length][i] = val
-        itp = interpolate(new_channel.strips[max_length][i], BSpline(Cubic(Line())), OnCell())
-        for j in eachindex(new_channel.strips)
-            if j != max_length
-                new_channel.strips[j] = itp[linspace(1,length(itp),length(new_channel.strips[j]))]
-            end
-        end
-    end
-    return new_channel
-end
+endof(c::LEDChannel) = length(c)
 
 mutable struct LEDArray
     controllers::Array{LEDController}

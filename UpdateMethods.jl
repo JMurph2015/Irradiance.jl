@@ -1,4 +1,4 @@
-using PortAudio, SampledSignals, DSP
+using PortAudio, SampledSignals, DSP, Colors
 const update_methods = Dict(
     "0"=>getBarsFrame
 )
@@ -24,10 +24,6 @@ function binFFT(rawspec, nbins)
     return (spec/maxspec)[1:end-1], maxspec
 end
 function getBarsFrame(leddata, audioSamp, rawspec)
-    leftwall = 1:109
-    frontwall = 110:309
-    rightwall = 310:418
-    backwall = 419:600
     freqs = Array(domain(rawspec))
     samp = Array(audioSamp)
     spec = zeros(100)
@@ -41,16 +37,18 @@ function getBarsFrame(leddata, audioSamp, rawspec)
     crossover = floor(Int, length(spec)/2)
     bottomEnd = mean((spec[1:crossover]))
     topEnd = mean(spec[crossover+1:end])
-    lowNum = floor(Int, bottomEnd*length(frontwall))
-    highNum = floor(Int, topEnd*length(rightwall))
-    for i in eachindex(leddata)
-        if (i >= leftwall[1] && i < leftwall[1]+highNum) || (i >= rightwall[1] && i < rightwall[1]+highNum)
-            leddata[i] = [0, 0, 255]
-        elseif (i >= frontwall[1] && i < frontwall[1]+lowNum) || (i >= backwall[1] && i < backwall[1]+lowNum)
-            leddata[i] = [255, 0, 0]
+    for i in eachindex(leddata.channels)
+        chan = leddata.channels[i]
+        if i % 4 == 1
+            leddata[1:bottomEnd*length(chan)] = colorant"blue"
+        elseif i % 4 == 2
+            leddata[1:topEnd*length(chan)] = colorant"red"
+        elseif i % 4 == 3
+            leddata[(1-bottomEnd)*length(chan):end] = colorant"blue"
+        elseif i % 4 == 0
+            leddata[(1-topEnd)*length(chan):end] = colorant"red"
         else
-            leddata[i] = [120,120,120]
-        end
+            error("Weird modulo arithmetic failed.  Probably should've thrown an eror before this")
     end
     return leddata
 end
