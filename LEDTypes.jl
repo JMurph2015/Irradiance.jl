@@ -1,5 +1,6 @@
 using Colors, Interpolations
 import Base.getindex, Base.length, Base.setindex!, Base.push!, Base.endof
+import FixedPointNumbers
 
 abstract type AbstractChannel end
 abstract type AbstractController end

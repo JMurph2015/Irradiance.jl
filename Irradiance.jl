@@ -1,3 +1,6 @@
+__precompile__(true)
+module Irradiance
+export run_app
 using PortAudio, SampledSignals, DSP
 
 include("./LEDTypes.jl")
@@ -6,23 +9,48 @@ include("./UpdateMethods.jl")
 
 const old_data = Array{Any, 1}(0)
 
-function main()
-    led_data = parse_config("./lights.json")
+function run_app(remote::Bool, args...)
+    if remote
+        if length(args) >= 1
+            args[1]::Int
+        end
+        if length(args) >= 2
+            args[2]::Int
+        end
+        socket = UDPSocket()
+        led_data = remote_config(socket, length(args)>=1 ? args[1] : 8080, length(args)>=2 ? args[2] : 37322)
+    else
+        led_data = parse_config(length(args)>=1 && typeof(args[1]) == String ? args[1] : "./lights.json")
+        socket = UDPSocket()
+    end
+    main(led_data, socket)
+end
+
+function main(led_data, udpsock)
     signal_channel = Channel{String}(1)
     push!(signal_channel, "0")
     audio = PortAudioStream("default")
-    udpsock = UDPSocket()
     valid_modes = r"\d{1,2}"
     @async begin
         stopped = false
         while !stopped
+            print("irradiance>")
             temp = readline(STDIN)
+            if typeof(temp) == Char
+                temp = convert(String, [temp])
+            end
             if ismatch(valid_modes, temp)
                 if length(signal_channel.data) > 0
                     take!(signal_channel)
                 end
-                put!(signal_channel, temp[1])
+                put!(signal_channel, temp)
             elseif ismatch(r"shutdown|quit"six, temp)
+                if length(signal_channel.data) > 0
+                    take!(signal_channel)
+                end
+                put!(signal_channel, "shutdown")
+                stopped = true
+            elseif ismatch(r"\x03"six, temp)
                 if length(signal_channel.data) > 0
                     take!(signal_channel)
                 end
@@ -94,4 +122,6 @@ function toHexString(num)
     num1 = floor(Int, num / 16)
     num2 = convert(Int, num % 16)
     return "$(magic[num1+1])$(magic[num2+1])"
+end
+
 end

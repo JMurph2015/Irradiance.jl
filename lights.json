@@ -6,7 +6,7 @@
         "1":{
             "ip":"127.0.0.1",
             "port":8080,
-            "size":600
+            "size":1200
         }
     },
     "strips":[
@@ -15,7 +15,7 @@
             "start":1,
             "end":150,
             "controller":"1",
-            "channel":4
+            "channel":1
         },
         {
             "name":"rightwall",
@@ -36,7 +36,35 @@
             "start":451,
             "end":600,
             "controller":"1",
-            "channel":1
+            "channel":4
+        },
+        {
+            "name":"frontwall1",
+            "start":601,
+            "end":750,
+            "controller":"1",
+            "channel":5
+        },
+        {
+            "name":"rightwall1",
+            "start":751,
+            "end":900,
+            "controller":"1",
+            "channel":6
+        },
+        {
+            "name":"backwall1",
+            "start":901,
+            "end":1050,
+            "controller":"1",
+            "channel":7
+        },
+        {
+            "name":"leftwall1",
+            "start":1051,
+            "end":1200,
+            "controller":"1",
+            "channel":8
         }
     ]
 }
