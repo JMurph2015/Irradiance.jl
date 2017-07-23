@@ -2,6 +2,20 @@ __precompile__(true)
 module Irradiance
 export run_app
 using PortAudio, SampledSignals, DSP
+const usegpu = Ref(false)
+import Base.fft
+
+try
+    import ArrayFire
+    usegpu[] = true
+end
+
+if usegpu[]
+    function gfft(buf::SampledSignals.SampleBuf)
+        return SpectrumBuf(Array(fft(ArrayFire.AFArray(buf.data))), nframes(buf)/samplerate(buf))
+    end
+end
+
 
 include("./LEDTypes.jl")
 include("./ParseConfig.jl")
@@ -28,7 +42,7 @@ end
 
 function main(led_data, udpsock)
     signal_channel = Channel{String}(1)
-    push!(signal_channel, "0")
+    push!(signal_channel, "1")
     audio = PortAudioStream("default")
     valid_modes = r"\d{1,2}"
     @async begin
@@ -75,20 +89,25 @@ function main_loop(audio, led_data, udpsock, signal_channel)
     for channel in led_data.channels
         channel[1:end] = colorant"black"
     end
+    frame_length = (1/60)s
+    audioSamp = read(audio, frame_length)
+    spec = fft(audioSamp[:,1])
     while !shutdown
         mode = fetch(signal_channel)
         if mode == "shutdown"
             shutdown = true
         end
-        audioSamp = read(audio, (1/60)s)
-        @async begin
-            parseAndUpdate(audioSamp, led_data, udpsock, mode)
-        end
+        audioSamp .= read(audio, frame_length)
+        parseAndUpdate(audioSamp, spec, led_data, udpsock, mode)
     end
 end
 
-function parseAndUpdate(audioSamp, led_data, socket, mode)
-    spec = fft(audioSamp[:,1])
+@inline function parseAndUpdate(audioSamp, spec, led_data, socket, mode)
+    if usegpu[]
+        spec .= fft(audioSamp[:,1])
+    else
+        spec .= fft(audioSamp[:,1])
+    end
     # use an implicit reference to the function if possible,
     # else fall back on the bars animation.
     if mode in keys(update_methods)
@@ -100,16 +119,24 @@ function parseAndUpdate(audioSamp, led_data, socket, mode)
 end
 
 function push(led_data::LEDArray, socket::UDPSocket)
-    push.(led_data.controllers, socket)
+    for controller in led_data.controllers
+        push(controller, socket)
+    end
 end
 
 function push(controller::LEDController, socket::UDPSocket)
     #println(length(filter(x->x==colorant"blue", controller.addrs)))
     #println(length(filter(x->x==colorant"red", controller.addrs)))
-    raw_data = zeros(UInt8, length(controller.addrs)*3)
-    raw_data .= vcat((convert_to_array.(controller.addrs))...)::Array{UInt8}
+    tmp = 0
+    for j in eachindex(controller.addrs)
+        tmp = 3*(j-1)
+        controller.raw_data[tmp+1] = controller.addrs[j].r.i
+        controller.raw_data[tmp+2] = controller.addrs[j].g.i
+        controller.raw_data[tmp+3] = controller.addrs[j].b.i
+    end
+    #controller.raw_data .= vcat((convert_to_array.(controller.addrs))...)::Array{UInt8}
     #println(length(filter(x->x!=0x00, raw_data)))
-    send(socket, controller.location[1], controller.location[2], raw_data)
+    send(socket, controller.location..., controller.raw_data)
 end
 
 function convert_to_array(color::ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}})

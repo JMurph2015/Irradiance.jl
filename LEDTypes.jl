@@ -13,19 +13,20 @@ mutable struct LEDStrip{T,N}
     controller::N
     startAddr::Int
     endAddr::Int
+    idxRange::UnitRange
     function LEDStrip{T,N}(name::String, channel::T, controller::N, startAddr::Int, endAddr::Int) where {T<:AbstractChannel, N<:AbstractController}
-        x = new(name, channel, controller, startAddr, endAddr)
+        x = new(name, channel, controller, startAddr, endAddr, startAddr:endAddr)
         push!(channel, x)
         push!(controller, x)
         return x
     end
 end
 
-length{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}) = strip.endAddr - strip.startAddr + 1
-getindex{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, i::Any) = getindex(strip.controller, i + strip.startAddr-1)
+length{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}) = length(strip.idxRange)
+getindex{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, i::Any) = getindex(getindex(strip.controller, strip.idxRange), i)
 endof{T<:AbstractChannel, N<:AbstractController}(s::LEDStrip{T, N}) = length(s)
-function setindex!{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Color, idx::Any)
-    setindex!(strip.controller, val, idx+(strip.startAddr-1))
+function setindex!{T<:AbstractChannel, N<:AbstractController}(strip::LEDStrip{T, N}, val::Any, idx::Any)
+    setindex!(strip.controller, setindex!(strip.controller[strip.idxRange], val, idx), strip.idxRange)
 end
 
 
@@ -33,8 +34,9 @@ mutable struct LEDController <: AbstractController
     addrs::Array{ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}},1}
     strips::Array{LEDStrip}
     location::Tuple{IPAddr, Int}
+    raw_data::Array{UInt8, 1}
     function LEDController(sz::Int, location::Tuple{IPAddr, Int})
-        return new(Array{ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}},1}(sz), Array{LEDStrip, 1}(0), location)
+        return new(Array{ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}},1}(sz), Array{LEDStrip, 1}(0), location, Array{UInt8, 1}(sz*3))
     end
 end
 
@@ -42,19 +44,39 @@ length(controller::LEDController) = length(controller.addrs)
 push!{T<:AbstractChannel, N<:AbstractController}(controller::LEDController, val::LEDStrip{T, N}) = push!(controller.strips, val)
 getindex(controller::LEDController, idx::Any) = getindex(controller.addrs, idx)
 endof(c::LEDController) = length(c)
-function setindex!(controller::LEDController, val::Color, idx::Any)
+function setindex!(controller::LEDController, val::Any, idx::Any)
     setindex!(controller.addrs, val, idx)
 end
 
 
 mutable struct LEDChannel <: AbstractChannel
     strips::Array{LEDStrip}
-    LEDChannel() = new(Array{LEDStrip, 1}(0))
+    map::Array{Tuple{Float64, Float64, LEDStrip}}
+    LEDChannel() = new(Array{LEDStrip, 1}(0), Array{Tuple{Float64, Float64, LEDStrip}}(0))
 end
-
-getindex(channel::LEDChannel, idx::Int) = getindex(channel.strips[indmax(length.(channel.strips))], idx)
-length(channel::LEDChannel) = maximum(length.(channel.strips))
-push!{T<:AbstractChannel, N<:AbstractController}(channel::LEDChannel, val::LEDStrip{T, N}) = push!(channel.strips, val)
+function length(channel::LEDChannel)
+    max = 0
+    for m in map
+        tmp = m[3]/(m[2]-m[1])
+        if floor(Int, tmp) > max
+            max = tmp
+        end
+    end
+    return max
+end
+getindex(channel::LEDChannel, idx) = getindex(channel.strips[indmax(length.(channel.strips))], idx)
+function length(channel::LEDChannel)
+    max = 0
+    for i in eachindex(channel.strips)
+        if length(channel.strips[i]) > max
+            max = length(channel.strips[i])
+        end
+    end
+    return max
+end
+function push!(channel::LEDChannel, val::LEDStrip{T,N}) where {T<:AbstractChannel, N<:AbstractController}
+    return push!(channel.strips, val)
+end
 
 function setindex!(channel::LEDChannel, val::Color, i::Any)
 
