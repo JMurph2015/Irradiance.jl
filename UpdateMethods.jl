@@ -58,6 +58,7 @@ function getBarsFrame(leddata, audioSamp, rawspec)
         else
             error("Weird modulo arithmetic failed.  Probably should've thrown an eror before this")
         end
+        update!(chan)
     end
     return leddata
 end
@@ -90,6 +91,7 @@ end
         color_range = [i<=crossover for i in 1:ref_len]
         chan[1:crossover] = colors[i];
         chan[crossover+1:ref_len] = default_color;
+        update!(chan)
     end
     return leddata
 end
