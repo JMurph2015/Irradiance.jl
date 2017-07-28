@@ -1,109 +1,191 @@
 using PortAudio, SampledSignals, DSP, Colors, Interpolations
-function binFFT(rawspec, nbins)
-    nbin = nbins + 1
-    f(x) = 2^x
-    dom = domain(rawspec)
-    range = linspace(log(dom[2])/log(2), log(dom[end-1])/log(2), nbin)[1:nbins]
-    bands = real.(f.(range))*length(dom)/dom[end]
-    itp = interpolate(abs.(rawspec), BSpline(Linear()), OnCell())
-    spec = zeros(Float64, length(bands))
-    Threads.@threads for i in eachindex(bands)
-        spec[i] = itp[bands[i]]
+const FFT_SCALE_DEFAULT = 1000.0
+const fft_scale = Ref(FFT_SCALE_DEFAULT)
+const fft_rescale_up_counter = Ref(0)
+const fft_rescale_down_counter = Ref(0)
+const FLOAT32_MAX = 3.4028235f38
+const INT_32_MAX = 2^32-1
+
+mutable struct AudioAnalysis
+    spec_bufs::Array{AFArray,1}
+    audio_buffers::Array{AFArray,1}
+    spec_buf_order::Array{Int,1}
+    audio_buffer_order::Array{Int,1}
+    delta_buffers::Array{AFArray,1}
+    spec_obj::SpectrumBuf
+    function AudioAnalysis(cpuAudio::SampleBuf, numBufs::Int)
+        audio_buffers = [AFArray{Float64}(convert.(Float64, cpuAudio.data[:,1])) for i in 1:numBufs]
+        spec_bufs = [fft(audio_buffers[1]) for j in 1:numBufs]
+        audio_buf_order = [numBufs - (k - 1) for k in 1:numBufs]
+        spec_buf_order = [numBufs - (l - 1) for l in 1:numBufs]
+        delta_buffers = [spec_bufs[1] - spec_bufs[end] for m in 1:numBufs]
+        spec_obj = SpectrumBuf(Array(spec_bufs[spec_buf_order[1]]), nframes(cpuAudio)/samplerate(cpuAudio))
+        return new(spec_bufs, audio_buffers, spec_buf_order, audio_buf_order, delta_buffers, spec_obj)
     end
-    #spec .= getindex.([itp], bands)
+end
+
+function rotate_array_clockwise!(arr::Array)
+    tmp1 = arr[1]
+    tmp2 = arr[2]
+    for i in eachindex(arr)
+        if i != length(arr)
+            tmp2 = arr[i+1]
+            setindex!(arr, tmp1, i+1)
+            tmp1 = tmp2
+        else
+            arr[1] = tmp1
+        end
+    end
+end
+
+function push_audio!(ana::AudioAnalysis, cpuAudio::Array{Float32,1})
+    ana.audio_buffers[ana.audio_buffer_order[end]] .= convert(Array{Float64}, cpuAudio)
+    rotate_array_clockwise!(ana.audio_buffer_order)
+end
+
+function process_audio!(ana::AudioAnalysis, cpuAudio::SampledSignals.SampleBuf)
+    push_audio!(ana, cpuAudio.data[:,1])
+
+    # For the moment, the deltas will just share order with the spectrums, but that could be added in the future if needed.
+    ana.spec_bufs[ana.spec_buf_order[end]] = fft(ana.audio_buffers[ana.audio_buffer_order[1]])
+    ana.delta_buffers[ana.spec_buf_order[end]] = ana.spec_bufs[ana.spec_buf_order[end]] - ana.spec_bufs[ana.spec_buf_order[1]]
+    rotate_array_clockwise!(ana.spec_buf_order)
+
+    ana.spec_obj.data .= ana.spec_bufs[ana.spec_buf_order[1]]
+    ana.spec_obj.samplerate = nframes(cpuAudio)/samplerate(cpuAudio)
+
+    handle_scaling(ana)
+end
+
+function binFFT(ana::AudioAnalysis, nbins::Int)
+    rawspec = ana.spec_bufs[ana.spec_buf_order[1]]
+    nbin = nbins + 1
+    f(x) = 2.0^x
+    dom = domain(ana.spec_obj)
+    range = linspace(log(dom[2])/log(2), log(dom[end-1])/log(2), nbin)[1:nbins]
+    bands = collect(abs.(f.(range))*length(dom)/dom[end])
+    af_data = AFArray{Complex{Float64}}(convert.(Complex{Float64}, rawspec))
+    spec = abs(approx1(ana.spec_bufs[ana.spec_buf_order[1]], AFArray{Float64}(bands), AF_INTERP_CUBIC_SPLINE, 0.0f0))
     maxspec = maximum(spec)
     if length(spec) > nbins
-        return spec[1:nbins], maxspec
+        return Array(spec)[1:nbins], maxspec
+    else
+        return Array(spec), maxspec
+    end
+end
+
+function binFFT(ana::AudioAnalysis, nbins::Int, cutoff::Int)
+    rawspec = ana.spec_bufs[ana.spec_buf_order[1]][1:cutoff]
+    nbin = nbins + 1
+    f(x) = 2.0^x
+    dom = domain(ana.spec_obj)
+    range = linspace(log(dom[2])/log(2), log(dom[end-1])/log(2), nbin)[1:nbins]
+    bands = collect(abs.(f.(range))*length(dom)/dom[end])
+    spec = abs(approx1(ana.spec_bufs[ana.spec_buf_order[1]], AFArray{Float64}(bands), AF_INTERP_CUBIC_SPLINE, 0.0f0))
+    maxspec = maximum(spec)
+    if length(spec) > nbins
+        return Array(spec)[1:nbins], maxspec
+    else
+        return Array(spec), maxspec
+    end
+end
+
+function hsl_to_rgb(h::Real,s::Real,l::Real)::Array{UInt8}
+    r = 0x00
+    g = 0x00
+    b = 0x00
+    if s == 0
+        r = round(UInt8, l*255)
+        g = round(UInt8, l*255)
+        b = round(UInt8, l*255)
+    else
+        q = l < 0.5 ? l * (1 + s) : l + s - l * s
+        p = 2 * l - q
+        r = hue2rgb(p, q, h + 1/3)*255
+        g = hue2rgb(p, q, h)*255
+        b = hue2rgb(p, q, h - 1/3)*255
+        if isnan(r);r=0;end;
+        if isnan(g);g=0;end;
+        if isnan(b);b=0;end;
+    end
+    return round.(UInt8, [r, g, b])
+end
+function hue2rgb(p::Real, q::Real, t::Real)::Real
+    if t < 0; t+=1; end;
+    if t > 1; t-=1; end;
+    if t < 1/6; return p + (q - p) * 6 * t; end;
+    if t < 1/2; return q; end;
+    if t < 2/3; return p + (q - p) * (2/3 - t) * 6; end;
+    return p
+end
+
+function gfft(buf::SampledSignals.SampleBuf)
+    return SpectrumBuf(Array(fft(ArrayFire.AFArray(buf.data))), nframes(buf)/samplerate(buf))
+end
+
+function gfft!(buf::SampledSignals.SampleBuf, gpu_buf1::AFArray, spec::SampledSignals.SpectrumBuf, gpu_buf2::AFArray)
+    gpu_buf1 .= buf.data
+    gpu_buf2 = fft(gpu_buf1)
+    spec.data .= gpu_buf2
+    spec.samplerate = nframes(buf)/samplerate(buf)
+end
+
+@inline function update!(channel::LEDChannel)
+    gpu_virtmem = AFArray(convert.(Float32, channel.virtualmem))
+    for m in channel.map
+        strip = m[3]
+        gpu_idxs = AFArray(convert.(Float32, collect(linspace(m[1]/100*channel.precision, m[2]/100*channel.precision, size(strip,1)))))
+        tmp = zeros(Float32, size(strip, 1))
+        for k in 1:size(strip, 2)
+            tmp .= approx1(gpu_virtmem[:,k], gpu_idxs, AF_INTERP_CUBIC_SPLINE, 0f0)
+            setindex!(strip.subArray, round.(UInt8, safeFloat.(tmp)), :, k)
+        end
+    end
+end
+
+function handle_scaling(ana::AudioAnalysis)
+    spec = abs(ana.spec_bufs[ana.spec_buf_order[1]])
+    maxspec = maximum(spec)
+    mean_delta = mean(abs(ana.delta_buffers[ana.spec_buf_order[1]]))
+    spec_coef = (mean(spec)+maxspec+mean_delta)/3
+    if maxspec > fft_scale[]*1.2
+        spec.*=fft_scale[]/maxspec
+        fft_scale[] = spec_coef * 1.05
+        fft_rescale_up_counter[] += 4
+        if fft_rescale_up_counter[] > 35
+            fft_scale[] *= 1.5
+            fft_rescale_up_counter[] = 0
+        end
+    elseif spec_coef > fft_scale[]*0.65
+        fft_rescale_up_counter[] += 2
+        if fft_rescale_up_counter[] > 20
+            fft_scale[] *= 1.25
+        end
+    elseif spec_coef > fft_scale[]*0.45
+        fft_rescale_up_counter[] += 1
+        if fft_rescale_up_counter[] > 15
+            fft_scale[] *= 1.05
+        end
+    elseif spec_coef < fft_scale[] * 0.1 && maxspec > fft_scale[]/100
+        fft_scale[] /= 1.05
+        spec.*= !isnan(fft_scale[]/spec_coef * 0.25) ? fft_scale[]/spec_coef * 0.25 : fft_scale[]/0.1
+        fft_rescale_down_counter[] += 4
+        if fft_rescale_down_counter[] > 35
+            fft_scale[] /= 1.5
+            fft_rescale_down_counter[] = 0
+        end
+    elseif spec_coef < fft_scale[] * 0.25
+        fft_rescale_down_counter[] += 1
+        if fft_rescale_down_counter[] > 15
+            fft_scale[] /= 1.05
+        end
+    end
+    if maxspec < FFT_SCALE_DEFAULT/300 && fft_scale[] > FFT_SCALE_DEFAULT
+        spec = zeros(AFArray, size(spec))
+        fft_scale[] = FFT_SCALE_DEFAULT
+    end
+    if maxspec > fft_scale[]
+        spec = max(spec-fft_scale[], 0)+fft_scale[].*(spec.>fft_scale[])
     end
     return spec, maxspec
 end
-function getBarsFrame(leddata, audioSamp, rawspec)
-    freqs = Array(domain(rawspec))
-    samp = Array(audioSamp)
-    spec = zeros(100)
-    spec,maxspec = binFFT(rawspec, 10)
-    for i in eachindex(spec)
-        if isnan(spec[i])
-            spec[i] = 0
-        end
-    end
-    maxAmp = maximum(spec)
-    crossover = floor(Int, length(spec)/1.5)
-    bottomEnd = mean((spec[1:crossover]))/maxspec
-    topEnd = mean(spec[crossover+1:end])/maxspec
-    for i in eachindex(leddata.channels)
-        chan = leddata.channels[i]
-        ref_len = length(leddata.channels[i])
-        #print(i)
-        if i % 4 == 1
-            lows = !isnan(bottomEnd*ref_len) ? round(Int,bottomEnd*ref_len) : 0
-            chan[1:lows] = colorant"blue"
-            chan[lows+1:end] = colorant"black"
-            #println(lows)
-        elseif i % 4 == 2
-            highs = !isnan(bottomEnd*ref_len) ? round(Int,topEnd*ref_len) : 0
-            chan[1:highs] = colorant"red"
-            chan[highs+1:end] = colorant"black"
-            #println(highs)
-        elseif i % 4 == 3
-            lows = !isnan(bottomEnd*ref_len) ? round(Int,bottomEnd*ref_len) : 0
-            chan[1:end-lows-1] = colorant"black"
-            chan[end-lows:end] = colorant"blue"
-            #println(lows)
-        elseif i % 4 == 0
-            highs = !isnan(bottomEnd*ref_len) ? round(Int,topEnd*ref_len) : 0
-            chan[1:end-highs-1] = colorant"black"
-            chan[end-highs:end] = colorant"red"
-            #println(highs)
-        else
-            error("Weird modulo arithmetic failed.  Probably should've thrown an eror before this")
-        end
-        update!(chan)
-    end
-    return leddata
-end
-@inline function rainbowBarsFrame(leddata, audioSamp, rawspec)
-    colors = [convert(RGB, HSL(x, 1, 0.5)) for x in linspace(0,360,length(leddata.channels)+1)[1:end-1]]
-    return nBarsFrame(leddata, audioSamp, rawspec, colors)
-end
-
-@inline function nBarsFrame(leddata, audioSamp, rawspec)
-    colors = [convert(RGB, HSL(240, x, 0.5)) for x in linspace(.25,1,length(leddata.channels))]
-    return nBarsFrame(leddata, audioSamp, rawspec, colors)
-end
-
-@inline function nBarsFrame(leddata, audioSamp, rawspec, colors)
-    spec,maxspec = binFFT(rawspec[1:floor(Int, min(length(rawspec),length(rawspec)/48*length(leddata.channels)))], length(leddata.channels))
-    default_color = colorant"black"
-    normspec = zeros(length(spec))
-    Threads.@threads for i in eachindex(spec)
-        ref_len = length(leddata.channels[i])
-        tmp = spec[i]/maxspec*ref_len
-        if !isnan(tmp)
-            normspec[i]=abs(tmp)
-        end
-    end
-    min_cross = 0
-    Threads.@threads for i in eachindex(leddata.channels)
-        chan = leddata.channels[i]
-        ref_len = length(leddata.channels[i]);
-        crossover = floor(Int, normspec[i])
-        color_range = [i<=crossover for i in 1:ref_len]
-        chan[1:crossover] = colors[i];
-        chan[crossover+1:ref_len] = default_color;
-        update!(chan)
-    end
-    return leddata
-end
-const file_regex = r".*?\.jl"six
-for effectfile in readdir("./effects")
-    if ismatch(file_regex, effectfile)
-        include("./effects/$effectfile")
-    end
-end
-const update_methods = Dict(
-    "0"=>getBarsFrame,
-    "1"=>nBarsFrame,
-    "2"=>rainbowBarsFrame,
-    "3"=>walkingPulseFrame
-)

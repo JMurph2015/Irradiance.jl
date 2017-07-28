@@ -2,24 +2,14 @@ __precompile__(true)
 module Irradiance
 export run_app
 using PortAudio, SampledSignals, DSP
-const usegpu = Ref(false)
+const usegpu = "ArrayFire" in keys(Pkg.installed())
 import Base.fft
-
-try
-    import ArrayFire
-    usegpu[] = true
-end
-
-if usegpu[]
-    function gfft(buf::SampledSignals.SampleBuf)
-        return SpectrumBuf(Array(fft(ArrayFire.AFArray(buf.data))), nframes(buf)/samplerate(buf))
-    end
-end
-
+using ArrayFire
 
 include("./LEDTypes.jl")
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
+include("./AbstractEffect.jl")
 
 const old_data = Array{Any, 1}(0)
 
@@ -86,36 +76,39 @@ end
 
 function main_loop(audio, led_data, udpsock, signal_channel)
     shutdown = false
+    clearline = join([" " for i in 1:80])
     for channel in led_data.channels
         channel[1:end] = colorant"black"
     end
-    frame_length = (1/60)s
+    frame_length = (1/20)s
     audioSamp = read(audio, frame_length)
-    spec = fft(audioSamp[:,1])
+    ana = AudioAnalysis(audioSamp, 3)
+    config = EffectConfig(
+        HSL(240, 1, 0.5),
+        HSL(240, 0, 0),
+        1,
+        1,
+        Dict{String, Any}()
+    )
+    current_effect = effect_types["0"](led_data, config, ana)
+    current_mode = "0"
     while !shutdown
         mode = fetch(signal_channel)
-        if mode == "shutdown"
-            shutdown = true
+        if mode != current_mode
+            if mode == "shutdown"
+                shutdown = true
+            elseif mode in keys(effect_types)
+                current_effect = effect_types[mode](led_data, config, ana)
+            end
         end
         audioSamp .= read(audio, frame_length)
-        parseAndUpdate(audioSamp, spec, led_data, udpsock, mode)
-    end
-end
+        # does the magic of ffts and rotating buffers
+        process_audio!(ana, audioSamp)
+        
+        update!(led_data, ana, current_effect)
 
-@inline function parseAndUpdate(audioSamp, spec, led_data, socket, mode)
-    if usegpu[]
-        spec .= fft(audioSamp[:,1])
-    else
-        spec .= fft(audioSamp[:,1])
+        push(led_data, udpsock)
     end
-    # use an implicit reference to the function if possible,
-    # else fall back on the bars animation.
-    if mode in keys(update_methods)
-        led_data = update_methods[mode](led_data, audioSamp[:,1], spec)
-    else
-        led_data = getBarsFrame(led_data, audioSamp[:,1], spec)
-    end
-    push(led_data, socket)
 end
 
 function push(led_data::LEDArray, socket::UDPSocket)
@@ -125,18 +118,8 @@ function push(led_data::LEDArray, socket::UDPSocket)
 end
 
 function push(controller::LEDController, socket::UDPSocket)
-    #println(length(filter(x->x==colorant"blue", controller.addrs)))
-    #println(length(filter(x->x==colorant"red", controller.addrs)))
-    tmp = 0
-    for j in eachindex(controller.addrs)
-        tmp = 3*(j-1)
-        controller.raw_data[tmp+1] = controller.addrs[j].r.i
-        controller.raw_data[tmp+2] = controller.addrs[j].g.i
-        controller.raw_data[tmp+3] = controller.addrs[j].b.i
-    end
-    #controller.raw_data .= vcat((convert_to_array.(controller.addrs))...)::Array{UInt8}
-    #println(length(filter(x->x!=0x00, raw_data)))
-    send(socket, controller.location..., controller.raw_data)
+    controller.raw_data = reshape(controller.addrs', :)
+    send(socket, controller.location[1], controller.location[2], controller.raw_data)
 end
 
 function convert_to_array(color::ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}})

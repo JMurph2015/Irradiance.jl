@@ -7,9 +7,10 @@ function parse_config(filename::String)
     end
     return parse_config(json_data)
 end
-function parse_config(json_data::Dict)
-    "strips" in keys(json_data) || error("Config file was invalid")
-    "controllers" in keys(json_data) || error("Config file missing controller section")
+function parse_config(json_data::Dict{String, N}) where N<:Any
+    if !("strips" in keys(json_data) && "controllers" in keys(json_data))
+        error("Config file was invalid")
+    end
     known_channels = Array{Int,1}(0)
     known_controllers = Array{String,1}(0)
     for strip in json_data["strips"]
@@ -41,7 +42,7 @@ function parse_config(json_data::Dict)
         tmp_controller = controllers[controller_to_idx[strip["controller"]]]
         push!(strips, LEDStrip(strip["name"], tmp_channel, tmp_controller, strip["start"], strip["end"]))
     end
-    led_array = LEDArray(controllers, channels, strips)
+    led_array = LEDArray(controllers, Array{LEDChannel,1}(0), channels, strips, Dict{String, Any}())
     return led_array
 end
 
