@@ -42,7 +42,7 @@ function parse_config(json_data::Dict{String, N}) where N<:Any
         tmp_controller = controllers[controller_to_idx[strip["controller"]]]
         push!(strips, LEDStrip(strip["name"], tmp_channel, tmp_controller, strip["start"], strip["end"]))
     end
-    led_array = LEDArray(controllers, Array{LEDChannel,1}(0), channels, strips, Dict{String, Any}())
+    led_array = LEDArray(controllers, Array{LEDChannel,1}(0), channels, strips)
     return led_array
 end
 

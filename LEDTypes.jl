@@ -7,7 +7,7 @@ abstract type AbstractController end
 
 
 # Make some types so that I don't go insane
-mutable struct LEDStrip{T,N}
+mutable struct LEDStrip{T<:AbstractChannel, N<:AbstractController}
     name::String
     controller::N
     subArray::SubArray
@@ -54,20 +54,31 @@ end
 
 
 mutable struct LEDChannel <: AbstractChannel
-    map::Array{Tuple{Float64, Float64, LEDStrip}}
-    itps::Array{Interpolations.BSplineInterpolation}
+    map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}
     virtualmem::Array{UInt8,2}
+    gpu_virtualmem::AFArray{Float32,2}
     precision::Float64
-    function LEDChannel(map::Array{Tuple{Float64, Float64, LEDStrip},1}, precision::Int64)
+    function LEDChannel(map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}, precision::Int64)
         init_virtualmem = zeros(UInt8, precision, 3)
-        init_itp = [interpolate(init_virtualmem[:,i], BSpline(Quadratic(Natural())), OnCell()) for i in 1:3]
-        return new(map, init_itp, init_virtualmem, precision)
+        gpu_virtualmem = AFArray(convert(Array{Float32}, init_virtualmem))
+        return new(map, init_virtualmem, gpu_virtualmem, precision)
     end
 end
 
-LEDChannel(map::Array{Tuple{Float64, Float64, LEDStrip},1}) = LEDChannel(map, 100)
-LEDChannel(precision::Int64) = LEDChannel(Array{Tuple{Float64, Float64, LEDStrip}}(0), precision)
-LEDChannel() = LEDChannel(Array{Tuple{Float64, Float64, LEDStrip}}(0), 100)
+function getGPUIdxArray(strip::LEDStrip, x::Float64, y::Float64, precision::Real)
+    return AFArray(convert.(Float32, collect(linspace(x/100*precision, y/100*precision, size(strip,1)))))
+end
+
+function LEDChannel(map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64},1}, precision::Float64)
+    new_map = map(map) do x
+        return (x[1:3]..., getGPUIdxArray(x[1:3]..., precision))
+    end
+    return LEDChannel(new_map, precision)
+end
+
+LEDChannel(map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}) = LEDChannel(map, 100)
+LEDChannel(precision::Int64) = LEDChannel(Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}(0), precision)
+LEDChannel() = LEDChannel(Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}(0), 100)
 getindex(channel::LEDChannel, idx::Any...) = getindex(channel.virtualmem, idx...)
 setindex!(channel::LEDChannel, val, idx::Any...) = setindex!(channel.virtualmem, val, idx...)
 function setindex!(channel::LEDChannel, val::ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}}, idx...) 
@@ -79,29 +90,31 @@ end
 function setindex!(channel::LEDChannel, val::Array{ColorTypes.RGB{FixedPointNumbers.Normed{UInt8,8}}}, idx...)
     setindex!(channel, [getfield(v, f).i for v in val, f in fieldnames(eltype(val))], idx..., :)
 end
-length(channel::LEDChannel) = size(channel.virtualmem)[1]
+length(channel::LEDChannel) = length(channel.virtualmem)
+size(channel::LEDChannel, x::Int) = size(channel.virtualmem, x)
+size(channel::LEDChannel, x...) = size(channel.virtualmem, x...)
 eachindex(channel::LEDChannel) = 1:length(channel)
 endof(c::LEDChannel) = length(c)
 
-function safeFloat(x::AbstractFloat)
-    if isnan(x) || x < 1e-3
-        return 0
-    elseif x > 255
-        return 255
-    else
-        return abs(x)
-    end
-end
 
-
-
-@inline function update!(f::Function, channel::LEDChannel)
+function update!(f::Function, channel::LEDChannel)
     for m in channel.map
-        indicies = linspace(m[1]/100*precision, m[2]/100*channel.precision, length(m[3]))
-        m[3] .= f.(indices)
+        indicies = linspace(m[2]/100*precision, m[3]/100*channel.precision, size(m[1],1))
+        m[1] .= f.(indices)
     end
 end
 
+function update!(channel::LEDChannel)
+    channel.gpu_virtualmem::AFArray{Float32,2} = AFArray(convert.(Float32, channel.virtualmem))
+    for m in channel.map
+        strip = m[1]
+        # TODO cache idxs array in the LEDChannel object.
+        for k in 1:size(strip, 2)
+            strip.subArray[:,k] .= round.(UInt8, min.( max.( Array( approx1(channel.gpu_virtualmem[:,k], m[4], AF_INTERP_CUBIC_SPLINE, 0f0) ), 0.0f0), 255.0f0) )
+            #setindex!(strip.subArray, tmp, 1:size(strip.subArray,1), k)
+        end
+    end
+end
 
 function push!(channel::LEDChannel, val::LEDStrip{T,N}) where {T<:AbstractChannel, N<:AbstractController}
     return push!(channel, val, 0.0, 100.0)
@@ -112,7 +125,7 @@ function push!(channel::LEDChannel, val::LEDStrip{T,N}, startLoc::Real, endLoc::
         error("Strips must be assigned to locations between 0.0 and 100.0 on a channel")
     end
     if !(val in getindex.(channel.map, 3))
-        return push!(channel.map, (startLoc, endLoc, val))
+        return push!(channel.map, (val, startLoc, endLoc, getGPUIdxArray(val, startLoc, endLoc, channel.precision)))
     else 
         return val
     end
@@ -123,7 +136,7 @@ function LEDChannel(channel1::LEDChannel, channel2::LEDChannel, offset::Float64)
     multiplier = 100/new_virtual_space
     old_map1 = deepcopy(channel1.map)
     old_map2 = deepcopy(channel2.map)
-    new_map = Array{Tuple{Float64, Float64, LEDStrip}}(length(channel1.map)+length(channel2.map))
+    new_map = Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}(length(channel1.map)+length(channel2.map))
     new_precision = max(channel1.precision, channel2.precision)
     indexed = 0
     offset1 = 0
@@ -136,11 +149,13 @@ function LEDChannel(channel1::LEDChannel, channel2::LEDChannel, offset::Float64)
     for i in eachindex(channel1.map)
         indexed = i
         new_map[i] = old_map1[i]
-        @. new_map[i][1:2] = (new_map[i][1:2]+offset1)*multiplier
+        @. new_map[i][2:3] = (new_map[i][2:3]+offset1)*multiplier
+        new_map[i][4] = getGPUIdxArray()
     end
     for i in eachindex(channel2.map)
         new_map[i+indexed] = old_map2[i]
-        @. new_map[i+indexed][1:2] = (new_map[i+indexed][1:2]+offset2)*multiplier
+        @. new_map[i+indexed][2:3] = (new_map[i+indexed][2:3]+offset2)*multiplier
+        new_map[i+indexed][4] = getGPUIdxArray(new_map[i+indexed][1:3]..., new_precision)
     end
     return LEDChannel(new_map, new_precision)
 end
@@ -160,23 +175,26 @@ function LEDChannel(channels::Array{LEDChannel}, offsets::Array{Float64})
     for i in eachindex(maps)
         if i == 1
             map!(maps[i]) do x
-                return ((x[1:2]+root_offset)*multiplier, x[3])
+                tmp = (x[1], ((x[2:3]+root_offset)*multiplier)..., x[4])
+                tmp[4] = getGPUIdxArray(tmp[1:3]..., new_precision)
+                return tmp
             end
         else
             map!(maps[i]) do x
-                return ((x[1:2]+offsets[i-1])*multiplier, x[3])
+                tmp = (x[1], ((x[2:3]+offsets[i-1])*multiplier)..., x[4])
+                tmp[4] = getGPUIdxArray(tmp[1:3]..., new_precision)
+                return tmp
             end
         end
     end
-    return LEDChannel(new_map, new_precision)
+    return LEDChannel(vcat(maps...), new_precision)
 end
 
 mutable struct LEDArray
-    controllers::Array{LEDController}
-    inactive_channels::Array{LEDChannel}
-    channels::Array{LEDChannel}
-    strips::Array{LEDStrip}
-    state::Dict{String, Any}
+    controllers::Array{LEDController,1}
+    inactive_channels::Array{LEDChannel,1}
+    channels::Array{LEDChannel,1}
+    strips::Array{LEDStrip{LEDChannel, LEDController},1}
 end
 
 

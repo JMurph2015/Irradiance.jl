@@ -1,4 +1,3 @@
-__precompile__(true)
 module Irradiance
 export run_app
 using PortAudio, SampledSignals, DSP
@@ -14,6 +13,7 @@ include("./AbstractEffect.jl")
 const old_data = Array{Any, 1}(0)
 
 function run_app(remote::Bool, args...)
+    ArrayFire.set_backend(AF_BACKEND_OPENCL)
     if remote
         if length(args) >= 1
             args[1]::Int
@@ -32,6 +32,15 @@ end
 
 function main(led_data, udpsock)
     signal_channel = Channel{String}(1)
+    config_channel = Channel{EffectConfig}(1)
+    channels = [signal_channel, config_channel]
+    push!(config_channel, EffectConfig(
+        HSL(240, 1, 0.5),
+        HSL(240, 0, 0),
+        1,
+        1,
+        Dict{String, Any}()
+    ))
     push!(signal_channel, "1")
     audio = PortAudioStream("default")
     valid_modes = r"\d{1,2}"
@@ -69,19 +78,21 @@ function main(led_data, udpsock)
             end
         end
     end
-    main_loop(audio, led_data, udpsock, signal_channel)
+    main_loop(audio, led_data, udpsock, channels)
     close(audio)
-    close(signal_channel)
+    close.(channels)
 end
 
-function main_loop(audio, led_data, udpsock, signal_channel)
+function main_loop(audio, led_data, udpsock, channels)
+    signal_channel = channels[1]
+    config_channel = channels[2]
     shutdown = false
     clearline = join([" " for i in 1:80])
     for channel in led_data.channels
-        channel[1:end] = colorant"black"
+        channel[1:size(channel,1)] = colorant"black"
     end
-    frame_length = (1/20)s
-    audioSamp = read(audio, frame_length)
+    frame_length = (1/30)s
+    @sync audioSamp = read(audio, frame_length)
     ana = AudioAnalysis(audioSamp, 3)
     config = EffectConfig(
         HSL(240, 1, 0.5),
@@ -90,23 +101,26 @@ function main_loop(audio, led_data, udpsock, signal_channel)
         1,
         Dict{String, Any}()
     )
-    current_effect = effect_types["0"](led_data, config, ana)
-    current_mode = "0"
+    current_effect = effect_types["1"](led_data, config, ana)
+    current_mode = ""
     while !shutdown
         mode = fetch(signal_channel)
+        config = fetch(config_channel)
         if mode != current_mode
             if mode == "shutdown"
                 shutdown = true
+                current_mode = mode
             elseif mode in keys(effect_types)
                 current_effect = effect_types[mode](led_data, config, ana)
+                current_mode = mode
             end
         end
-        audioSamp .= read(audio, frame_length)
+        @sync audioSamp .= read(audio, frame_length)
         # does the magic of ffts and rotating buffers
         process_audio!(ana, audioSamp)
         
         update!(led_data, ana, current_effect)
-
+        #println(led_data.channels)
         push(led_data, udpsock)
     end
 end

@@ -7,18 +7,18 @@ const FLOAT32_MAX = 3.4028235f38
 const INT_32_MAX = 2^32-1
 
 mutable struct AudioAnalysis
-    spec_bufs::Array{AFArray,1}
-    audio_buffers::Array{AFArray,1}
+    spec_bufs::Array{AFArray{Complex{Float64}},1}
+    audio_buffers::Array{AFArray{Float64},1}
     spec_buf_order::Array{Int,1}
     audio_buffer_order::Array{Int,1}
-    delta_buffers::Array{AFArray,1}
+    delta_buffers::Array{AFArray{Float64},1}
     spec_obj::SpectrumBuf
     function AudioAnalysis(cpuAudio::SampleBuf, numBufs::Int)
         audio_buffers = [AFArray{Float64}(convert.(Float64, cpuAudio.data[:,1])) for i in 1:numBufs]
         spec_bufs = [fft(audio_buffers[1]) for j in 1:numBufs]
         audio_buf_order = [numBufs - (k - 1) for k in 1:numBufs]
         spec_buf_order = [numBufs - (l - 1) for l in 1:numBufs]
-        delta_buffers = [spec_bufs[1] - spec_bufs[end] for m in 1:numBufs]
+        delta_buffers = [abs(spec_bufs[1]) - abs(spec_bufs[end]) for m in 1:numBufs]
         spec_obj = SpectrumBuf(Array(spec_bufs[spec_buf_order[1]]), nframes(cpuAudio)/samplerate(cpuAudio))
         return new(spec_bufs, audio_buffers, spec_buf_order, audio_buf_order, delta_buffers, spec_obj)
     end
@@ -39,7 +39,7 @@ function rotate_array_clockwise!(arr::Array)
 end
 
 function push_audio!(ana::AudioAnalysis, cpuAudio::Array{Float32,1})
-    ana.audio_buffers[ana.audio_buffer_order[end]] .= convert(Array{Float64}, cpuAudio)
+    ana.audio_buffers[ana.audio_buffer_order[end]] = AFArray(convert(Array{Float64}, cpuAudio))
     rotate_array_clockwise!(ana.audio_buffer_order)
 end
 
@@ -48,7 +48,7 @@ function process_audio!(ana::AudioAnalysis, cpuAudio::SampledSignals.SampleBuf)
 
     # For the moment, the deltas will just share order with the spectrums, but that could be added in the future if needed.
     ana.spec_bufs[ana.spec_buf_order[end]] = fft(ana.audio_buffers[ana.audio_buffer_order[1]])
-    ana.delta_buffers[ana.spec_buf_order[end]] = ana.spec_bufs[ana.spec_buf_order[end]] - ana.spec_bufs[ana.spec_buf_order[1]]
+    ana.delta_buffers[ana.spec_buf_order[end]] = abs(ana.spec_bufs[ana.spec_buf_order[end]]) - abs(ana.spec_bufs[ana.spec_buf_order[1]])
     rotate_array_clockwise!(ana.spec_buf_order)
 
     ana.spec_obj.data .= ana.spec_bufs[ana.spec_buf_order[1]]
@@ -64,7 +64,6 @@ function binFFT(ana::AudioAnalysis, nbins::Int)
     dom = domain(ana.spec_obj)
     range = linspace(log(dom[2])/log(2), log(dom[end-1])/log(2), nbin)[1:nbins]
     bands = collect(abs.(f.(range))*length(dom)/dom[end])
-    af_data = AFArray{Complex{Float64}}(convert.(Complex{Float64}, rawspec))
     spec = abs(approx1(ana.spec_bufs[ana.spec_buf_order[1]], AFArray{Float64}(bands), AF_INTERP_CUBIC_SPLINE, 0.0f0))
     maxspec = maximum(spec)
     if length(spec) > nbins
@@ -90,7 +89,11 @@ function binFFT(ana::AudioAnalysis, nbins::Int, cutoff::Int)
     end
 end
 
-function hsl_to_rgb(h::Real,s::Real,l::Real)::Array{UInt8}
+@inline function hsl_to_rgb(color::ColorTypes.HSL)
+    return hsl_to_rgb(color.h/360, color.s, color.l)
+end
+
+@inline function hsl_to_rgb(h::Real,s::Real,l::Real)::Array{UInt8}
     r = 0x00
     g = 0x00
     b = 0x00
@@ -130,38 +133,25 @@ function gfft!(buf::SampledSignals.SampleBuf, gpu_buf1::AFArray, spec::SampledSi
     spec.samplerate = nframes(buf)/samplerate(buf)
 end
 
-@inline function update!(channel::LEDChannel)
-    gpu_virtmem = AFArray(convert.(Float32, channel.virtualmem))
-    for m in channel.map
-        strip = m[3]
-        gpu_idxs = AFArray(convert.(Float32, collect(linspace(m[1]/100*channel.precision, m[2]/100*channel.precision, size(strip,1)))))
-        tmp = zeros(Float32, size(strip, 1))
-        for k in 1:size(strip, 2)
-            tmp .= approx1(gpu_virtmem[:,k], gpu_idxs, AF_INTERP_CUBIC_SPLINE, 0f0)
-            setindex!(strip.subArray, round.(UInt8, safeFloat.(tmp)), :, k)
-        end
-    end
-end
-
 function handle_scaling(ana::AudioAnalysis)
     spec = abs(ana.spec_bufs[ana.spec_buf_order[1]])
     maxspec = maximum(spec)
     mean_delta = mean(abs(ana.delta_buffers[ana.spec_buf_order[1]]))
     spec_coef = (mean(spec)+maxspec+mean_delta)/3
-    if maxspec > fft_scale[]*1.2
+    if maxspec > fft_scale[]*1.0
         spec.*=fft_scale[]/maxspec
-        fft_scale[] = spec_coef * 1.05
+        fft_scale[] = maxspec * 1.2
         fft_rescale_up_counter[] += 4
         if fft_rescale_up_counter[] > 35
             fft_scale[] *= 1.5
             fft_rescale_up_counter[] = 0
         end
-    elseif spec_coef > fft_scale[]*0.65
+    elseif spec_coef > fft_scale[]*0.50
         fft_rescale_up_counter[] += 2
         if fft_rescale_up_counter[] > 20
             fft_scale[] *= 1.25
         end
-    elseif spec_coef > fft_scale[]*0.45
+    elseif spec_coef > fft_scale[]*0.30
         fft_rescale_up_counter[] += 1
         if fft_rescale_up_counter[] > 15
             fft_scale[] *= 1.05
@@ -174,18 +164,18 @@ function handle_scaling(ana::AudioAnalysis)
             fft_scale[] /= 1.5
             fft_rescale_down_counter[] = 0
         end
-    elseif spec_coef < fft_scale[] * 0.25
+    elseif spec_coef < fft_scale[] * 0.20
         fft_rescale_down_counter[] += 1
         if fft_rescale_down_counter[] > 15
             fft_scale[] /= 1.05
         end
     end
-    if maxspec < FFT_SCALE_DEFAULT/300 && fft_scale[] > FFT_SCALE_DEFAULT
-        spec = zeros(AFArray, size(spec))
+    if maxspec < FFT_SCALE_DEFAULT/100 && fft_scale[] > FFT_SCALE_DEFAULT
+        spec = zeros(AFArray{Float64}, size(spec))
         fft_scale[] = FFT_SCALE_DEFAULT
     end
     if maxspec > fft_scale[]
-        spec = max(spec-fft_scale[], 0)+fft_scale[].*(spec.>fft_scale[])
+        spec = max(spec-fft_scale[], 0.0)+fft_scale[].*(spec.>fft_scale[])
     end
     return spec, maxspec
 end
