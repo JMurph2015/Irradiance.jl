@@ -9,11 +9,12 @@ include("./LEDTypes.jl")
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
 include("./AbstractEffect.jl")
+include("./IrradianceCLI.jl")
 
 const old_data = Array{Any, 1}(0)
 
 function run_app(remote::Bool, args...)
-    ArrayFire.set_backend(AF_BACKEND_OPENCL)
+    #ArrayFire.set_backend(AF_BACKEND_OPENCL)
     if remote
         if length(args) >= 1
             args[1]::Int
@@ -31,8 +32,8 @@ function run_app(remote::Bool, args...)
 end
 
 function main(led_data, udpsock)
-    signal_channel = Channel{String}(1)
-    config_channel = Channel{EffectConfig}(1)
+    signal_channel = Channel{String}(2)
+    config_channel = Channel{EffectConfig}(2)
     channels = [signal_channel, config_channel]
     push!(config_channel, EffectConfig(
         HSL(240, 1, 0.5),
@@ -43,41 +44,7 @@ function main(led_data, udpsock)
     ))
     push!(signal_channel, "1")
     audio = PortAudioStream("default")
-    valid_modes = r"\d{1,2}"
-    @async begin
-        stopped = false
-        while !stopped
-            print("irradiance>")
-            temp = readline(STDIN)
-            if typeof(temp) == Char
-                temp = convert(String, [temp])
-            end
-            if ismatch(valid_modes, temp)
-                if length(signal_channel.data) > 0
-                    take!(signal_channel)
-                end
-                put!(signal_channel, temp)
-            elseif ismatch(r"shutdown|quit"six, temp)
-                if length(signal_channel.data) > 0
-                    take!(signal_channel)
-                end
-                put!(signal_channel, "shutdown")
-                stopped = true
-            elseif ismatch(r"\x03"six, temp)
-                if length(signal_channel.data) > 0
-                    take!(signal_channel)
-                end
-                put!(signal_channel, "shutdown")
-                stopped = true
-            elseif ismatch(r"\x02"six, temp)
-                if length(signal_channel.data) > 0
-                    take!(signal_channel)
-                end
-                put!(signal_channel, "shutdown")
-                stopped = true
-            end
-        end
-    end
+    @async handle_cli(channels)
     main_loop(audio, led_data, udpsock, channels)
     close(audio)
     close.(channels)
@@ -94,18 +61,17 @@ function main_loop(audio, led_data, udpsock, channels)
     frame_length = (1/30)s
     @sync audioSamp = read(audio, frame_length)
     ana = AudioAnalysis(audioSamp, 3)
-    config = EffectConfig(
-        HSL(240, 1, 0.5),
-        HSL(240, 0, 0),
-        1,
-        1,
-        Dict{String, Any}()
-    )
+    config = fetch(config_channel)
     current_effect = effect_types["1"](led_data, config, ana)
     current_mode = ""
     while !shutdown
         mode = fetch(signal_channel)
-        config = fetch(config_channel)
+        if fetch(config_channel) != config
+            config = fetch(config_channel)
+            if issubtype(typeof(current_effect), ConfigurableEffect)
+                current_effect.config = config
+            end
+        end
         if mode != current_mode
             if mode == "shutdown"
                 shutdown = true

@@ -4,7 +4,7 @@ abstract type ConfigurableEffect <: Effect end
 function update(e::Effect)
     throw(NullException())
 end
-mutable struct EffectConfig
+immutable EffectConfig
     primary_color::HSL
     secondary_color::HSL
     scaling::AbstractFloat

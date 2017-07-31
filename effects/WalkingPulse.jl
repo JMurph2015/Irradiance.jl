@@ -73,8 +73,8 @@ function update!(leddata::LEDArray, ana::AudioAnalysis, effect::WalkingPulseEffe
         update!(channel)
     end
     
-    if effect.walking_offset == 400.0
-        effect.walking_offset -= 100.0
+    if effect.walking_offset != 10000 && effect.walking_offset % 100 == 0
+        effect.walking_offset = 10000
     end
-    effect.walking_offset += 0.5
+    effect.walking_offset += 0.5*effect.config.speed
 end
