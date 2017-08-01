@@ -6,7 +6,7 @@ function handle_cli(channels)
     signal_channel = channels[1]
     config_channel = channels[2]
     stopped = false
-    valid_modes = r"mode\s*\d{1,2}"i
+    valid_modes = r"mode\s*(?<mode>\d{1,2})\s*"i
     config_command = r"config\s*(?<args>.*)"i
     while !stopped
         print("$(bold_ansi)$(blue_ansi)irradiance>$(end_ansi)")
@@ -15,10 +15,11 @@ function handle_cli(channels)
             temp = convert(String, [temp])
         end
         if ismatch(valid_modes, temp)
+            mat = match(valid_modes, temp)
             if length(signal_channel.data) > 0
                 take!(signal_channel)
             end
-            put!(signal_channel, temp)
+            put!(signal_channel, mat[:mode])
         elseif ismatch(config_command, temp)
             handle_config(config_channel, match(config_command, temp)[:args])
         elseif (
