@@ -179,3 +179,7 @@ function handle_scaling(ana::AudioAnalysis)
     end
     return spec, maxspec
 end
+
+macro bounded(val, minVal, maxVal)
+    return :(min(max($val, $minVal), $maxVal))
+end

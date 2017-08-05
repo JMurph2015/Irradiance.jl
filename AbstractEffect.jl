@@ -21,5 +21,6 @@ end
 
 const effect_types = Dict{String, Any}(
     "0"=>NBarsEffect{Float64},
-    "1"=>WalkingPulseEffect{Float64}
+    "1"=>WalkingPulseEffect{Float64},
+    "2"=>HeatWaveEffect
 )
