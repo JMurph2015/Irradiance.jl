@@ -4,13 +4,19 @@ abstract type ConfigurableEffect <: Effect end
 function update(e::Effect)
     throw(NullException())
 end
-immutable EffectConfig
-    primary_color::HSL
-    secondary_color::HSL
-    scaling::AbstractFloat
-    speed::AbstractFloat
+immutable EffectConfig{T<:AbstractFloat}
+    primary_color::HSL{T}
+    secondary_color::HSL{T}
+    scaling::T
+    speed::T
     special::Dict{String, Any}
 end
+
+function EffectConfig(primary_color::HSL, secondary_color::HSL, scaling::Number, speed::Number, special::Dict{String, Any})
+    target = eltype(primary_color)
+    return EffectConfig(primary_color, convert(HSL{target}, secondary_color), convert(target, scaling), convert(target, speed), special)
+end
+
 
 const file_regex = r".*?\.jl"six
 for effectfile in readdir("./effects")

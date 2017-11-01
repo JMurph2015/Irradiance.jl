@@ -37,7 +37,7 @@ function main(led_data, udpsock)
     channels = [signal_channel, config_channel]
     push!(config_channel, EffectConfig(
         HSL(240, 1, 0.5),
-        HSL(240, 0, 0),
+        HSL(240, 0, 0.0),
         1,
         1,
         Dict{String, Any}()
@@ -58,7 +58,7 @@ function main_loop(audio, led_data, udpsock, channels)
     for channel in led_data.channels
         channel[1:size(channel,1)] = colorant"black"
     end
-    frame_length = (1/10)s
+    frame_length = (1/30)s
     @sync audioSamp = read(audio, frame_length)
     ana = AudioAnalysis(audioSamp, 3)
     config = fetch(config_channel)
@@ -88,7 +88,6 @@ function main_loop(audio, led_data, udpsock, channels)
             update!(led_data, ana, current_effect)
             #println(led_data.channels)
             push(led_data, udpsock)
-
             audioSamp = read(audio, frame_length)
         end
     end

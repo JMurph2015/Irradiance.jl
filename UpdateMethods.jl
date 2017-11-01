@@ -181,5 +181,5 @@ function handle_scaling(ana::AudioAnalysis)
 end
 
 macro bounded(val, minVal, maxVal)
-    return :(min(max($val, $minVal), $maxVal))
+    return esc(:(min(max($val, $minVal), $maxVal)))
 end
