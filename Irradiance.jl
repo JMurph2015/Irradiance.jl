@@ -60,6 +60,7 @@ function main_loop(audio, led_data, udpsock, channels)
     end
     frame_length = (1/30)s
     @sync audioSamp = read(audio, frame_length)
+    audioTmp = deepcopy(audioSamp)
     ana = AudioAnalysis(audioSamp, 3)
     config = fetch(config_channel)
     current_effect = effect_types["1"](led_data, config, ana)
@@ -81,15 +82,19 @@ function main_loop(audio, led_data, udpsock, channels)
                 current_mode = mode
             end
         end
-        @sync begin
-            # does the magic of ffts and rotating buffers
-            process_audio!(ana, audioSamp)
+        Threads.@threads for i in 1:2
+            if Threads.threadid() == 1
+                audioTmp = read(audio, frame_length)
+            else
+                # does the magic of ffts and rotating buffers
+                process_audio!(ana, audioSamp)
 
-            update!(led_data, ana, current_effect)
-            #println(led_data.channels)
-            push(led_data, udpsock)
-            audioSamp = read(audio, frame_length)
+                update!(led_data, ana, current_effect)
+            end
         end
+        
+        push(led_data, udpsock)
+        audioSamp = deepcopy(audioTmp)
     end
 end
 
