@@ -5,6 +5,7 @@ const usegpu = "ArrayFire" in keys(Pkg.installed())
 import Base.fft
 using ArrayFire
 
+include("./RotatingBuffer.jl")
 include("./LEDTypes.jl")
 include("./ParseConfig.jl")
 include("./UpdateMethods.jl")
@@ -22,8 +23,18 @@ function run_app(remote::Bool, args...)
         if length(args) >= 2
             args[2]::Int
         end
+        if length(args) >= 3
+            args[3]::IPAddr
+        end
         socket = UDPSocket()
-        led_data = remote_config(socket, length(args)>=1 ? args[1] : 8080, length(args)>=2 ? args[2] : 37322)
+        bind(socket, ip"0.0.0.0", 0)
+        Base.setopt(socket, enable_broadcast=1)
+        led_data = remote_config(
+            socket, 
+            length(args)>=1 ? args[1] : 8080, 
+            length(args)>=2 ? args[2] : 37322, 
+            length(args)>=3 ? args[3] : ip"10.42.0.255"
+        )
     else
         led_data = parse_config(length(args)>=1 && typeof(args[1]) == String ? args[1] : "./lights.json")
         socket = UDPSocket()
@@ -58,10 +69,10 @@ function main_loop(audio, led_data, udpsock, channels)
     for channel in led_data.channels
         channel[1:size(channel,1)] = colorant"black"
     end
-    frame_length = (1/30)s
-    @sync audioSamp = read(audio, frame_length)
-    audioTmp = deepcopy(audioSamp)
-    ana = AudioAnalysis(audioSamp, 3)
+    frame_length = (1/10)s
+    @sync audio_samp = read(audio, frame_length)
+    audio_buf = RotatingBuffer(audio_samp, 2)
+    ana = AudioAnalysis(audio_buf[1], 3)
     config = fetch(config_channel)
     current_effect = effect_types["1"](led_data, config, ana)
     current_mode = ""
@@ -82,19 +93,20 @@ function main_loop(audio, led_data, udpsock, channels)
                 current_mode = mode
             end
         end
+
         Threads.@threads for i in 1:2
             if Threads.threadid() == 1
-                audioTmp = read(audio, frame_length)
+                audio_buf[1] = @sync read(audio, frame_length)
             else
                 # does the magic of ffts and rotating buffers
-                process_audio!(ana, audioSamp)
+                process_audio!(ana, audio_buf[1])
 
                 update!(led_data, ana, current_effect)
             end
         end
         
         push(led_data, udpsock)
-        audioSamp = deepcopy(audioTmp)
+        rotate_clockwise!(audio_buf)
     end
 end
 

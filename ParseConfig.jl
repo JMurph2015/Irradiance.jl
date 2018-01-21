@@ -46,11 +46,11 @@ function parse_config(json_data::Dict{String, N}) where N<:Any
     return led_array
 end
 
-function remote_config(outgoing_socket, main_port, discovery_port)
+function remote_config(outgoing_socket, main_port, discovery_port, subnet)
     broadcast_packet = getBroadcastPacket()
     discovery_socket = UDPSocket()
-    bind(discovery_socket,ip"127.0.0.1", discovery_port)
-    send(outgoing_socket, ip"127.0.0.1", main_port, broadcast_packet)
+    bind(discovery_socket, ip"0.0.0.0", discovery_port)
+    send(outgoing_socket, subnet, main_port, broadcast_packet)
     discovered_clients = Array{Tuple{IPAddr,Dict},1}(0)
     searching = true
     @async begin

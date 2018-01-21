@@ -24,16 +24,19 @@ mutable struct AudioAnalysis
     end
 end
 
+
 function rotate_array_clockwise!(arr::Array)
-    tmp1 = arr[1]
-    tmp2 = arr[2]
-    for i in eachindex(arr)
-        if i != length(arr)
-            tmp2 = arr[i+1]
-            setindex!(arr, tmp1, i+1)
-            tmp1 = tmp2
-        else
-            arr[1] = tmp1
+    if length(arr) > 1
+        tmp1 = arr[1]
+        tmp2 = arr[2]
+        for i in eachindex(arr)
+            if i != length(arr)
+                tmp2 = arr[i+1]
+                setindex!(arr, tmp1, i+1)
+                tmp1 = tmp2
+            else
+                arr[1] = tmp1
+            end
         end
     end
 end
