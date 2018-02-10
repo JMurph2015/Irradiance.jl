@@ -4,6 +4,7 @@ import FixedPointNumbers
 
 """
     AbstractChannel
+    
     This channel abstraction allows me to use circular referential types between
     LEDStrip, LEDChannel, and LEDController because Julia doesn't yet support the 
     forward lookahead necessary to use this feature with only the child types.
@@ -11,6 +12,7 @@ import FixedPointNumbers
 abstract type AbstractChannel end
 """
     AbstractController
+    
     This does the same for Controllers that AbstractChannel did for Channels:
     it allows me to use typed circular references without forward lookahead.
 """
@@ -18,10 +20,29 @@ abstract type AbstractController end
 
 """
     LEDStrip{T<:AbstractChannel, N<:AbstractController}
-    This encapsulates the core representation of a string of LED's.
-    It contains a view (a reference to a section of an array) of a portion of
-    its controller's memory addresses.  It also has a reference to its controller
-    which happends to be circular.
+    
+    Summary:  
+        Represents a string of LEDs in an Array-like form
+
+    Details:  
+        This encapsulates the core representation of a string of LED's.
+        It contains a view (a reference to a section of an array) of a portion of
+        its controller's memory addresses.  It also has a reference to its controller
+        which happends to be circular.
+
+    Fields:
+        name::String - A string representing the name of the strip of LEDs
+            like "living room wall"
+        controller::AbstractController - A reference to the LEDController
+            which this particular LEDStrip is attached to
+        subArray::SubArray - A reference to the relevant portion of the 
+            controller's LED memory
+        idxRange::UnitRange - A range reflecting which addresses this 
+            LEDStrip refers to on its attached controller
+
+    Inner Constructors:
+        LEDStrip{T,N}(name::String, channel::T, controller::N, startAddr::Int, endAddr::Int) where {T<:AbstractChannel, N<:AbstractController}
+            returns: LEDStrip{T,N} initialized with provided values
 """
 mutable struct LEDStrip{T<:AbstractChannel, N<:AbstractController}
     name::String
@@ -82,9 +103,29 @@ end
 
 """
     LEDController <: AbstractController
-    Contains the core representation of a LEDController for Irradiance.
-    This class contains a large portion of the actual memory allocations for the system
-    because it holds the memory for physical LED addresses.
+
+    Summary:
+        Represents a particular networked LED controller.  Contains most of the memory for "real" LEDs
+        
+    Details:
+        Contains the core representation of a LEDController for Irradiance.
+        This class contains a large portion of the actual memory allocations for the system
+        because it holds the memory for physical LED addresses.
+
+    Fields:
+        addrs::Array{UInt8, 2} - The address space for this controller, one dimension is for different LEDs
+            and the other channel is for the different color channels
+        strips::Array{LEDStrip} - An array containing all LEDStrips that are controlled by this controller
+            and thus have their memory mapped into this controller
+        location::Tuple{IPAddr,Int} - A tuple of an IPAddr, which is the IP address of the controller, and an
+            Int, which is the port to contact the controller on.
+        raw_data::Array{UInt8, 1} - A flattened form of the addrs field, for sending over the wire to the
+            controller.  In this array each LED gets three adjacent indexes and then the next LED gets the
+            next three indexes, and so on.
+    Inner Constructors:
+        LEDController(sz::Int, location::Tuple{IPAddr,Int})
+            returns: LEDController initialized with no LEDStrips attached and zeroed data arrays
+
 """
 mutable struct LEDController <: AbstractController
     addrs::Array{UInt8, 2}
@@ -123,9 +164,38 @@ end
 
 """
     LEDChannel <: AbstractChannel
-    This contains the implementation of a AbstractChannel for Irradiance. This is the main abstraction used
-    in the rest of the program for a collection of LED's, all effects are applied to LEDChannels, not 
-    LEDStrips, so that effects can be independent of the physical layout of the LED's
+
+    Summary:
+        Abstracts LEDStrips into amorpheous channels to which effects are applied.
+
+    Details:
+        This contains the implementation of a AbstractChannel for Irradiance. This is the main abstraction used
+        in the rest of the program for a collection of LED's, all effects are applied to LEDChannels, not 
+        LEDStrips, so that effects can be independent of the physical layout of the LED's
+
+    Fields:
+        map::Array{Tuple{LEDStrip{LEDChannel,LEDController}, Float64, Float64, AFArray{Float32,1}}, 1} -
+            An array of large tuples that contain four things: the LEDStrip, its start on the channel, its
+            end on the channel, and the array on the GPU that contains the pseudo-indexes for that LEDStrip
+        virtualmem::Array{UInt8} - The abstraction of LEDs provided to effects so that they don't have to
+            worry about the details of LED density, position, etc.  This way effects are much more portable
+            across setups given that those setups have a reasonable LEDChannel map setup.
+        gpu_virtualmem::AFArray{Float32,2} - The memory allocation on the GPU used for the virtual memory 
+            mentioned above.  Since all of the interpolation is executed on the GPU, we allocate arrays on
+            the GPU semi-permanently so that there is less allocation overhead.  All data going through the
+            channel passes through here at least once per frame (unless one is using a function eval effect)
+        precision::Float64 - A somewhat arbitrary variable that determines how much memory to allocate to the
+            virtual memory abstraction.  Allows higher fidelity rendering of effects assuming one has as a dense
+            enough LED mapping that it exceeds the default 100 per channel. Higher precisions obviously cause more
+            computation workload per frame.
+
+    Inner Constructors:
+        LEDChannel( 
+            map::Array{Tuple{LEDStrip{LEDChannel,LEDController}, Float64, Float64, AFArray{Float32,1}}, 1},
+            precision::Int64
+        )
+            returns: A LEDChannel initialized with zeroed out virtual memory, uses given map and precision.
+
 """
 mutable struct LEDChannel <: AbstractChannel
     map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64, AFArray{Float32, 1}},1}
@@ -141,12 +211,25 @@ end
 
 """
     getGPUIdxArray(strip::LEDStrip, x::Float64, y::Float64, precision::Real)::AFArray{Float32}
-    
-    This function gets the virtual memory addresses corresponding to the real indices of the given
-    strip.  Essentially it returns an array of equal size to the input strip, but each element in the
-    returned array is the index that the LED at that position should reference in the GPU.  Note that
-    these can be Float32s, this is intentional, since this data is then fed into in interpolation algorithm
-    that doesn't mind non-integer indices.
+
+    Summary:
+        Translates the 1:end indexes of the strip into pseudo-indexes for interpolation on the GPU
+
+    Details:
+        This function gets the virtual memory addresses corresponding to the real indices of the given
+        strip.  Essentially it returns an array of equal size to the input strip, but each element in the
+        returned array is the index that the LED at that position should reference in the GPU.  Note that
+        these can be Float32s, this is intentional, since this data is then fed into in interpolation algorithm
+        that doesn't mind non-integer indices.
+
+    Arguments:
+        strip::LEDStrip - The strip for which to get indexes
+        x::Float64 - The start point of the strip in the LEDChannel
+        y::Float64 - The end point of the strip in the LEDChannel
+        precision - The precision of the LEDChannel being indexed
+
+    Returns:
+        AFArray{Float32, 1} (Array on GPU) of pseudo-indexes mapping to the LEDs in the LEDStrip
 """
 function getGPUIdxArray(strip::LEDStrip, x::Float64, y::Float64, precision::Real)
     return AFArray(convert.(Float32, collect(linspace(x/100*precision, y/100*precision, size(strip,1)))))
@@ -155,9 +238,17 @@ end
 """
     LEDChannel(map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64},1}, precision::Float64)
 
-    This function is a convenience constructor for LEDChannel that initializes the map with 
-    the given map and precision, then calls the default constructor.  Makes it substantially
-    less onerous to create LEDChannels.
+    Summary:
+        Convenience constructor for an LEDChannel that starts with the given (non-GPU) map and precision
+
+    Details:
+        This function is a convenience constructor for LEDChannel that first creates a map with the proper
+        gpuIdxArrays initialized on the GPU, then initializes an LEDChannel with that new, valid map.  Prevents
+        us from having to do the GPU setup manually with every initialization of an LEDChannel.  This is the
+        primary constructor used to build other more convenient constructors.
+
+    Returns:
+        LEDChannel initialized with zeroed out virtual memory and the given map and precision.
 """
 function LEDChannel(map::Array{Tuple{LEDStrip{LEDChannel, LEDController}, Float64, Float64},1}, precision::Float64)
     new_map = map(map) do x
@@ -218,12 +309,29 @@ endof(c::LEDChannel) = length(c)
 """
     update!(f:Function, channel::LEDChannel)
     
-    The update! functions are probably the most complicated and crucial things
-    in this file!  This one takes a function of index (aka f(index)) that returns
-    a color for each index called, then takes that function and evaluates it at 
-    each mapped index of the channel's virtual memory and puts that result on the
-    LEDStrip memory.  If unclear, see the other implementation of update! first
-    then come back here.
+    Summary:
+        Updates the representations of physical LEDs according to a continuous function over [0.0,100.0]
+
+    Details:
+        The update! functions are probably two of the most carefully implemented functions in the
+        whole project because there is a potentially a huge amount of processing to be done and
+        this function has to be performant because it is called at least once every frame of
+        execution.
+
+        This version takes in a function and evaluates that function at all of the virtual indexes
+        that the LEDChannel mapping specifies.  It writes the results of that function evaluation
+        to the LEDStrip memory (and by reference the LEDController memory), which then can be sent
+        out to the real controller and rendered onto the real LEDs.
+
+        Note: Since the function is the first argument, this supports Julia's "do syntax".
+
+    Arguments:
+        f::Function - A continuous function from 0.0 to 100.0 that outputs a color for the LED at
+            virtual index
+        channel::LEDChannel - The channel on which to render the functional effect.
+
+    Returns:
+        None
 """
 function update!(f::Function, channel::LEDChannel)
     for m in channel.map
@@ -234,21 +342,40 @@ end
 
 """
     update!(channel::LEDChannel)
+
+    Summary:
+        Updates the representations of physical LEDs by interpolating the virtual memory
+
+    Details:
+        This function is the bread and butter of most of the existing effects because it
+        most closely mimics programming real LEDs, just in this case they aren't actually real.
+        It works by taking the current state of the virtual memory and transferring that to a
+        pre-allocated array on the GPU.  Then it considers a strip and within that strip a single
+        color channel.  Using the LEDChannel's map's gpuIdxArray to provide the pseudo-indexes of
+        the strip, it interpolates for each channel.  Then it transfers the data back to main
+        memory, after which it applies bounds that prevent the data from overflowing a UInt8.
+        Lastly it rounds the whole array to UInt8 and assigns those values to the strip.  
+        
+        This can be a rather large amount of work when there are many channels (i.e. 55) and large 
+        numbers of LEDs per channel (i.e. 397).  Those numbers mentioned just so happen to be the 
+        maximum currently possible with only one controller because UDP packet size limits me to 
+        21835 LEDs per controller.  Thus a decent bit of care was taken to make this function efficient.
+
+        Note: Presently this function is not thread safe as it does not have any sort of lock on
+        the gpu_virtualmem as it transfers that to the GPU, nor does it lock the output path, like
+        the controller memory or the strip memory view.
+
+    Arguments:
+        channel::LEDChannel - The channel to interpolate to concrete LED values.
+
+    Returns:
+        None
     
-    This function is the real bread and butter of the most common effect workflow.  
-    It takes the current state of the virtual memory and via interpolation gets the value
-    of the virtual memory at each LED position in the map.  So if there were 100 LED's mapped
-    across 100% of the virtual memory, then this would evaluate the interpolation at each integer
-    from 1-100 (since Julia is 1-indexed).  It can be substantially more complicated than that
-    however, as there aren't particular restrictions on how LED's are mapped into LEDChannels
-    except that they are contiguous and range within the bounds of the indices of the virtual
-    memory.
 """
 function update!(channel::LEDChannel)
     channel.gpu_virtualmem::AFArray{Float32,2} = AFArray(convert.(Float32, channel.virtualmem))
     for m in channel.map
         strip = m[1]
-        # TODO cache idxs array in the LEDChannel object.
         for k in 1:size(strip, 2)
             strip.subArray[:,k] .= round.(UInt8, min.( max.( Array( approx1(channel.gpu_virtualmem[:,k], m[4], AF_INTERP_CUBIC_SPLINE, 0f0) ), 0.0f0), 255.0f0) )
             #setindex!(strip.subArray, tmp, 1:size(strip.subArray,1), k)
@@ -259,8 +386,21 @@ end
 """
     push!(channel::LEDChannel, val::LEDStrip{T,N}) where {T<:AbstractChannel, N<:AbstractChannel}
 
-    This function adds a LEDStrip to the channel in the default map configuration (which is spanning the
-    whole channel).
+    Summary:
+        This function adds an LEDStrip to the LEDChannel's map in the default configuration
+
+    Details:
+        Adds an LEDStrip to the LEDChannel's map in the default configuration which is that the
+        LEDStrip spans the whole channel range, [0.0,100.0].  If it already exists in the map,
+        nothing is changed.
+
+    Arguments:
+        channel::LEDChannel - The channel to which to add the strip
+        val::LEDStrip - The strip to add to the channel's map.
+
+    Returns:
+        LEDStrip which was added to the channel
+    
 """
 function push!(channel::LEDChannel, val::LEDStrip{T,N}) where {T<:AbstractChannel, N<:AbstractController}
     return push!(channel, val, 0.0, 100.0)
@@ -269,8 +409,22 @@ end
 """
     push!(channel::LEDChannel, val::LEDStrip{T,N}, startLoc::Real, endLoc::Real) where {T<:AbstractChannel, N:<AbstractController}
 
-    This function inserts a LEDStrip in the LEDChannel's mapping in an arbitrary start and end location. Used to build
-    LEDChannels with more complicated mappings than just a bunch of (0.0,100.0) entries.
+    Summary:
+        This function adds an LEDStrip to the LEDChannel's map in the specified mapping
+
+    Details:
+        Adds an LEDStrip to the LEDChannel's map with the specified start and end location.
+        This function does nothing if the value is already present in the LEDChannel's map.
+
+    Arguments:
+        channel::LEDChannel - The channel to which to add the strip
+        val::LEDStrip - The strip to add to the channel's map
+        startLoc::Real - A number representing the beginning of the strip's pseudo-indexes on the channel
+        endLoc::Real - A number representing the end of the strip's pseudo-indexes on the channel
+
+    Returns:
+        LEDStrip which was added or already present on the channel
+
 """
 function push!(channel::LEDChannel, val::LEDStrip{T,N}, startLoc::Real, endLoc::Real) where {T<:AbstractChannel, N<:AbstractController}
     if !((startLoc >= 0.0 && startLoc <= 100.0) && (endLoc >= 0.0 && endLoc <= 100.0))
@@ -286,11 +440,25 @@ end
 """
     LEDChannel(channel1::LEDChannel, channel2::LEDChannel, offset::Float64)
 
-    Another constructor overload for LEDChannel that creates a new channel by merging
-    two existing channels with a given offset.  So if you wanted to set them up to mirror
-    each other, the offset would be zero, if you wanted to concatenate them, you would specify
-    an offset of 100.0.  Negative offsets are also supported in case one wants to overlay the
-    second channel to the left of the first channel.
+    Summary:
+        Another constructor overload for LEDChannel that allows merging and concatenating channels
+
+    Details:
+        Another constructor overload for LEDChannel that creates a new channel by merging
+        two existing channels with a given offset.  So if you wanted to set them up to mirror
+        each other, the offset would be zero, if you wanted to concatenate them, you would specify
+        an offset of 100.0.  Negative offsets are also supported in case one wants to overlay the
+        second channel to the left of the first channel.
+
+    Arguments:
+        channel1::LEDChannel - the first LEDChannel to merge or concatenate
+        channel2::LEDChannel - the second LEDChannel to merge or concatenate
+        offset::Float64 - A number representing how much to offset the channels when remapping,
+            the resultant channel will be renomalized against the new overall width so 
+            values from ~(-1000.0) to ~(+1000.0) are allowable.
+
+    Returns:
+        LEDChannel the resultant channel from the merge.
 """
 function LEDChannel(channel1::LEDChannel, channel2::LEDChannel, offset::Float64)
     new_virtual_space = 100 + abs(offset)
@@ -323,11 +491,23 @@ end
 
 """
     LEDChannel(channels::Array{LEDChannels}, offsets::Array{Float64})
+    
+    Summary:
+        Takes an Array of LEDChannels and merges them according to an array of offsets
 
-    A constructor overload that creates a new channel from an array of channels
-    and an array of offsets (the first of which is the offset of the first channel
-    and so on).  The merging process normalizes everything against the channel offset
-    furthest to the left (furthest negative, even!).
+    Details:
+        A constructor overload that creates a new channel from an array of channels
+        and an array of offsets (the first of which is the offset of the first channel
+        and so on).  The merging process normalizes everything against the channel offset
+        furthest to the left (furthest negative, even!).
+
+    Arguments:
+        channels::Array{LEDChannel} - An array of channels to be merged together
+        offsets::Array{Float64} - An array (equal length as channels) of the offsets
+            to be used to merge the channels
+
+    Returns:
+        LEDChannel the resultant channel from the merge.
 """
 function LEDChannel(channels::Array{LEDChannel}, offsets::Array{Float64})
     root_offset = 0
@@ -362,8 +542,32 @@ end
 """
     LEDArray
 
-    This structure bundles all of the important structures used by Irradiance
-    into one large structure for convenience.
+    Summary:
+        A convenience bundle that contains all of the relavent data to update
+        the LEDs.
+    
+    Details:
+        This structure bundles all of the important structures used by Irradiance
+        into one large structure for convenience.
+
+    Fields:
+        controllers::Array{LEDController,1} - All of the active LEDControllers
+        inactive_channels::Array{LEDChannel,1} - All of the inactive LEDChannels that
+            are worth keeping around, such as "root channels" which only hold one
+            LEDStrip mapped across the whole channel.
+        channels::Array{LEDChannel,1} - All of the active channels that are being rendered to
+        strips::Array{LEDStrip{LEDController,LEDChannel},1} - All of the currently known strips
+
+    Inner Constructors:
+        (default) LEDArray(
+            controllers::Array{LEDController}, 
+            inactive_channels::Array{LEDChannel,1},
+            channels::Array{LEDChannel,1},
+            strips::Array{LEDStrip{LEDController, LEDChannel},1}
+            )
+            Returns:
+                LEDArray with specified values exactly as passed
+
 """
 mutable struct LEDArray
     controllers::Array{LEDController,1}
@@ -374,9 +578,25 @@ end
 
 """
     LEDStrip(name::String, channel::LEDChannel, controller::LEDController, startAddr::Int, endAddr::Int)
+    
+    Summary:
+        Concrete constructor free of the generic types previously needed to get around lookahead issues.
 
-    This is the concrete constructor for LEDStrip that uses the concrete implementations of LEDController
-    and LEDChannel.
+    Details:
+        This is the concrete constructor for LEDStrip that uses the concrete implementations of LEDController
+        and LEDChannel. Using as concrete of types as possible is good performance in Julia, so this was worth
+        the parameterization etc. to get here.
+
+    Arguments:
+        name::String - A name for the strip
+        channel::LEDChannel - The channel to attach this strip to
+        controller::LEDController - The controller to attach this strip to
+        startAddr::Int - The first index on the controller that this strip represents
+        endAddr::Int - The last index on the controller that this strip represents
+
+    Returns:
+        LEDStrip{LEDChannel, LEDController} with the specified arguments set, and a reference to the relevant
+            controller memory.
 """
 function LEDStrip(name::String, channel::LEDChannel, controller::LEDController, startAddr::Int, endAddr::Int)
     return LEDStrip{LEDChannel, LEDController}(name, channel, controller, startAddr, endAddr)
