@@ -1,0 +1,6 @@
+authors = ["Joseph Murphy <air.jmurph@gmail.com>"]
+name = "Irradiance"
+uuid = "c898a252-a119-11e8-3615-77fe44665b8d"
+version = "0.1.0"
+
+[deps]
