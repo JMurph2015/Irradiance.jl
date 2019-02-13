@@ -1,8 +1,8 @@
 module Irradiance
 export run_app
 using PortAudio, SampledSignals, DSP
+import Pkg
 const usegpu = "ArrayFire" in keys(Pkg.installed())
-import Base.fft
 using ArrayFire
 
 include("./RotatingBuffer.jl")
@@ -12,7 +12,7 @@ include("./UpdateMethods.jl")
 include("./AbstractEffect.jl")
 include("./IrradianceCLI.jl")
 
-const old_data = Array{Any, 1}(0)
+const old_data = Array{Any, 1}(undef, 0)
 
 function run_app(remote::Bool, args...)
     #ArrayFire.set_backend(AF_BACKEND_OPENCL)
@@ -28,7 +28,7 @@ function run_app(remote::Bool, args...)
         end
         socket = UDPSocket()
         bind(socket, ip"0.0.0.0", 0)
-        Base.setopt(socket, enable_broadcast=1)
+        Sockets.setopt(socket, enable_broadcast=1)
         led_data = remote_config(
             socket, 
             length(args)>=1 ? args[1] : 8080, 

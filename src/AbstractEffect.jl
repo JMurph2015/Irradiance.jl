@@ -4,7 +4,7 @@ abstract type ConfigurableEffect <: Effect end
 function update(e::Effect)
     throw(NullException())
 end
-immutable EffectConfig{T<:AbstractFloat}
+struct EffectConfig{T<:AbstractFloat}
     primary_color::HSL{T}
     secondary_color::HSL{T}
     scaling::T
@@ -19,8 +19,8 @@ end
 
 
 const file_regex = r".*?\.jl"six
-for effectfile in readdir("./effects")
-    if ismatch(file_regex, effectfile)
+for effectfile in readdir("./src/effects")
+    if match(file_regex, effectfile) != nothing
         include("./effects/$effectfile")
     end
 end

@@ -3,7 +3,7 @@ import Base.getindex
 import Base.setindex!
 import Base.size
 import Base.length
-import Base.endof
+import Base.lastindex
 mutable struct RotatingBuffer{T<:AbstractArray}
     data::Vector{T}
     current_order::Vector{Int64}
@@ -17,7 +17,7 @@ getindex(v::RotatingBuffer{T}, i::Int) where T<:AbstractArray = getindex(v.data,
 setindex!(v::RotatingBuffer{T}, val::Any, i::Int) where T<:AbstractArray = setindex!(v.data, val, getindex(v.current_order, i));
 size(v::RotatingBuffer{T}) where T<:AbstractArray = size(v.data);
 length(v::RotatingBuffer{T}) where T<:AbstractArray = size(v.data);
-endof(v::RotatingBuffer{T}) where T<:AbstractArray = endof(endof(current_order));
+lastindex(v::RotatingBuffer{T}) where T<:AbstractArray = lastindex(lastindex(current_order));
 function rotate_clockwise!(v::RotatingBuffer{T}) where T<:AbstractArray
     if length(v.current_order) > 1
         tmp1 = v.current_order[1]

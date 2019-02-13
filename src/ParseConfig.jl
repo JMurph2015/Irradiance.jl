@@ -1,4 +1,5 @@
 using JSON
+using Sockets
 
 function parse_config(filename::String)
     json_data = Dict()
@@ -11,8 +12,8 @@ function parse_config(json_data::Dict{String, N}) where N<:Any
     if !("strips" in keys(json_data) && "controllers" in keys(json_data))
         error("Config file was invalid")
     end
-    known_channels = Array{Int,1}(0)
-    known_controllers = Array{String,1}(0)
+    known_channels = Array{Int,1}(undef, 0)
+    known_controllers = Array{String,1}(undef, 0)
     for strip in json_data["strips"]
         if !(strip["channel"] in known_channels)
             push!(known_channels, strip["channel"])
@@ -27,22 +28,22 @@ function parse_config(json_data::Dict{String, N}) where N<:Any
     num_controllers = length(known_controllers)
     channel_to_idx = Dict(num => findfirst(known_channels,num) for num in known_channels)
     controller_to_idx = Dict(num => findfirst(known_controllers,num) for num in known_controllers)
-    channels = Array{LEDChannel, 1}(num_channels)
+    channels = Array{LEDChannel, 1}(undef, num_channels)
     for i in eachindex(channels)
         channels[i] = LEDChannel()
     end
-    controllers = Array{LEDController, 1}(num_controllers)
+    controllers = Array{LEDController, 1}(undef, num_controllers)
     for i in eachindex(controllers)
         controller_json = json_data["controllers"][known_controllers[i]]
         controllers[i] = LEDController(controller_json["size"], (IPv4(controller_json["ip"]), controller_json["port"]))
     end
-    strips = Array{LEDStrip, 1}(0)
+    strips = Array{LEDStrip, 1}(undef, 0)
     for strip in json_data["strips"]
         tmp_channel = channels[channel_to_idx[strip["channel"]]]
         tmp_controller = controllers[controller_to_idx[strip["controller"]]]
         push!(strips, LEDStrip(strip["name"], tmp_channel, tmp_controller, strip["start"], strip["end"]))
     end
-    led_array = LEDArray(controllers, Array{LEDChannel,1}(0), channels, strips)
+    led_array = LEDArray(controllers, Array{LEDChannel,1}(undef, 0), channels, strips)
     return led_array
 end
 
@@ -51,7 +52,7 @@ function remote_config(outgoing_socket, main_port, discovery_port, subnet)
     discovery_socket = UDPSocket()
     bind(discovery_socket, ip"0.0.0.0", discovery_port)
     send(outgoing_socket, subnet, main_port, broadcast_packet)
-    discovered_clients = Array{Tuple{IPAddr,Dict},1}(0)
+    discovered_clients = Array{Tuple{IPAddr,Dict},1}(undef, 0)
     searching = true
     @async begin
         while searching
@@ -79,7 +80,7 @@ function remote_config(outgoing_socket, main_port, discovery_port, subnet)
     close(discovery_socket)
 
     output = get_overall_config_template()
-    known_channels = Array{Int}(0)
+    known_channels = Array{Int}(undef, 0)
     for data_tup in discovered_clients
         address, data = data_tup
         try
@@ -114,7 +115,7 @@ end
 
 function getBroadcastPacket()
     #macString = readstring(`cat /sys/class/net/eth0/address`)
-    ipString = split(readstring(`hostname -I`))[1]
+    ipString = split(read(`hostname -I`, String))[1]
     output_dict = Dict(
         "ip"=>ipString,
         "mac"=>"mac address here",
@@ -129,7 +130,7 @@ function get_overall_config_template()
             "numChannels"=>0
         ),
         "controllers"=>Dict{String, Dict{String, Union{Number, String, IPAddr}}}(),
-        "strips"=>Array{Dict{String,Union{Number, String}},1}()
+        "strips"=>Array{Dict{String,Union{Number, String}},1}(undef, 0)
     )
 end
 

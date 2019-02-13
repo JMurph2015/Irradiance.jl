@@ -1,5 +1,6 @@
 using Colors, Interpolations
-import Base: getindex, length, setindex!, push!, endof, eachindex, size
+import Base: getindex, length, setindex!, push!, lastindex, eachindex, size
+import Sockets: IPAddr
 import FixedPointNumbers
 
 """
@@ -73,8 +74,8 @@ getindex(strip::LEDStrip{T, N}, i::Any...) where {T<:AbstractChannel, N<:Abstrac
 "Implements the equivalent of Python's enumerate() instance method, returns a range of indices to iterate over"
 eachindex(s::LEDStrip{T, N}) where {T<:AbstractChannel, N<:AbstractController}=eachindex(s.subArray)
 
-"Implements a endof base function that returns the index of the last element"
-endof(s::LEDStrip{T, N}) where {T<:AbstractChannel, N<:AbstractController} = endof(s.subArray)
+"Implements a lastindex base function that returns the index of the last element"
+lastindex(s::LEDStrip{T, N}) where {T<:AbstractChannel, N<:AbstractController} = lastindex(s.subArray)
 
 "Implements a size function for the LEDStrip, overrides the base function"
 size(s::LEDStrip{T, N}, vargs...) where {T<:AbstractChannel, N<:AbstractController} = size(s.subArray, vargs...)
@@ -154,8 +155,8 @@ getindex(controller::LEDController, idx...) = getindex(controller.addrs, idx...)
 "Implements the eachindex function for LEDControllers, returns a range of all valid indices for the LEDController"
 eachindex(c::LEDController) = 1:length(c)
 
-"Implements the endof function for LEDControllers, returns the last valid index of the LEDController"
-endof(c::LEDController) = length(c)
+"Implements the lastindex function for LEDControllers, returns the last valid index of the LEDController"
+lastindex(c::LEDController) = length(c)
 
 "Implements the setindex! function for LEDControllers, sets an index of the LEDController to a given value"
 function setindex!(controller::LEDController, val::Any, idx::Any...)
@@ -303,8 +304,8 @@ size(channel::LEDChannel, x...) = size(channel.virtualmem, x...)
 """
 eachindex(channel::LEDChannel) = 1:length(channel)
 
-"Implements the endof function for LEDChannel, returns the last valid index"
-endof(c::LEDChannel) = length(c)
+"Implements the lastindex function for LEDChannel, returns the last valid index"
+lastindex(c::LEDChannel) = length(c)
 
 """
     update!(f:Function, channel::LEDChannel)
