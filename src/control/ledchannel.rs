@@ -1,44 +1,53 @@
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-struct LEDChannel<T> {
+use candela::Pixel;
+use serde::{Serialize, Deserialize};
+
+use super::ChannelMapping;
+
+use std::{
+    slice::SliceIndex,
+    ops::{Index, IndexMut}
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LEDChannel {
     map: Vec<ChannelMapping>,
-    virtual_mem: Vec<T>,
+    virtual_mem: Vec<Pixel>,
     precision: usize,
 }
 
-impl<I, T> Index<I> for LEDChannel<T>
-where:
-    I: SliceIndex<[T]> {
+impl<I> Index<I> for LEDChannel
+where
+    I: SliceIndex<[Pixel]> {
     type Output = I::Output;
 
     fn index(&self, index: I) -> &Self::Output {
-        return self.virtual_mem[index];
+        return self.virtual_mem.index(index);
     }
 }
 
-impl<I, T> Index<I> for LEDChannel<T>
-where:
-    I: SliceIndex<[T]> {
-    type Output = I::Output;
+impl<I> IndexMut<I> for LEDChannel
+where
+    I: SliceIndex<[Pixel]> {
 
-    fn index(&mut self, index: I) -> &mut Self::Output {
-        return self.virtual_mem[index];
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        return self.virtual_mem.index_mut(index);
     }
 }
 
-impl<'a, T> IntoIterator for &'a LEDChannel<T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
+impl<'a> IntoIterator for &'a LEDChannel {
+    type Item = &'a Pixel;
+    type IntoIter = std::slice::Iter<'a, Pixel>;
 
-    fn into_iter(self) -> slice::Iter<'a, T> {
+    fn into_iter(self) -> std::slice::Iter<'a, Pixel> {
         self.virtual_mem.iter()
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut LEDChannel<T> {
-    type Item = &'a mut T;
-    type IntoIter = slice::IterMut<'a, T>;
+impl<'a> IntoIterator for &'a mut LEDChannel {
+    type Item = &'a mut Pixel;
+    type IntoIter = std::slice::IterMut<'a, Pixel>;
 
-    fn into_iter(self) -> slice::IterMut<'a, T> {
+    fn into_iter(self) -> std::slice::IterMut<'a, Pixel> {
         self.virtual_mem.iter_mut()
     }
 }

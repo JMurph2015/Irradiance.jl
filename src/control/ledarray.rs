@@ -1,6 +1,9 @@
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-struct LEDArray<T> {
-    controllers: HashMap<LEDAddress, LEDController<T>>,
-    inactive_channels: Vec<LEDChannel<T>>,
-    channels: Vec<LEDChannel<T>>,
+use candela::sockets::{CandelaSocketController, CandelaSocketServer};
+use super::LEDChannel;
+
+#[derive(Debug)]
+struct LEDArray {
+    channels: Vec<LEDChannel>,
+    inactive_channels: Vec<LEDChannel>,
+    server: CandelaSocketServer<Controller = CandelaSocketController>,
 }

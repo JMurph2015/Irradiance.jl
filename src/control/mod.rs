@@ -1,8 +1,13 @@
+use serde::{Serialize, Deserialize};
+
+mod ledchannel;
+pub use ledchannel::LEDChannel;
+mod ledarray;
+
 trait AbstractChannel {}
 trait AbstractController {}
 trait AbstractLEDStrip {}
 
-type Pixel = [u8; 3];
 type LEDAddress = u32;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]

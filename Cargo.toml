@@ -5,6 +5,13 @@ authors = ["Joseph Murphy <air.jmurph@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "irradiance-bin"
+path = "src/main.rs"
 
 [dependencies]
-candela = "^0.2"
+candela = { git = "https://github.com/JMurph2015/candela.git", branch = "main", features = ["zmq-server"]}
+serde = "1.0"
