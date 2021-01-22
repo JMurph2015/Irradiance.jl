@@ -3,6 +3,7 @@ use serde::{Serialize, Deserialize};
 mod ledchannel;
 pub use ledchannel::LEDChannel;
 mod ledarray;
+pub use ledarray::LEDArray;
 
 trait AbstractChannel {}
 trait AbstractController {}
