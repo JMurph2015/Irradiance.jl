@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 mod ledchannel;
 pub use ledchannel::LEDChannel;

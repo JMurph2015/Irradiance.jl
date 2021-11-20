@@ -4,7 +4,7 @@ pub trait IrradianceSoundProvider {
     fn new() -> Self;
     fn init(&mut self);
     /// Read audio from the provider
-    /// 
+    ///
     /// # Arguments
     /// * `length` - The number of milliseconds of audio to get.
     fn read(&mut self, length: u32) -> Vec<u32>;

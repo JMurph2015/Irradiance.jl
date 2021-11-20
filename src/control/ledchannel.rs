@@ -1,11 +1,11 @@
 use candela::Pixel;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use super::ChannelMapping;
 
 use std::{
+    ops::{Index, IndexMut},
     slice::SliceIndex,
-    ops::{Index, IndexMut}
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +17,8 @@ pub struct LEDChannel {
 
 impl<I> Index<I> for LEDChannel
 where
-    I: SliceIndex<[Pixel]> {
+    I: SliceIndex<[Pixel]>,
+{
     type Output = I::Output;
 
     fn index(&self, index: I) -> &Self::Output {
@@ -27,8 +28,8 @@ where
 
 impl<I> IndexMut<I> for LEDChannel
 where
-    I: SliceIndex<[Pixel]> {
-
+    I: SliceIndex<[Pixel]>,
+{
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         return self.virtual_mem.index_mut(index);
     }

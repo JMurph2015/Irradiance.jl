@@ -1,5 +1,5 @@
-use candela::sockets::{CandelaSocketController, CandelaSocketServer};
 use super::LEDChannel;
+use candela::sockets::{CandelaSocketController, CandelaSocketServer};
 
 #[derive(Debug)]
 pub struct LEDArray {
